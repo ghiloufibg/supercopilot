@@ -82,6 +82,7 @@ sources/commands/*.md            # authored once per command (26); generates ski
 sources/mcp-servers.json         # authored once; generates every MCP config, local and global
 scripts/generate.js               # local generator: sources -> .github/skills, .github/prompts, .copilot, .vscode
 scripts/deploy-global.js          # deploys this repo's content OUT to ~/.copilot/ and the IDEs' global MCP configs
+scripts/patch-vscode-settings.js  # surgically adds chat.agentFilesLocations to VS Code's settings.json, comments-safe
 .github/agents/*.agent.md         # 16 personas + orchestrator + 5 behavioral-mode agents — authored directly
 .github/agents/experts/*.agent.md # 9 Business Panel expert subagents, user-invocable: false
 .github/skills/*/SKILL.md         # 29 skills (26 generated commands + bulk-refactor + ui-components + deep-research)
@@ -111,7 +112,7 @@ Copies/generates this repo's content to the actual locations Copilot reads from 
 | Same MCP servers | VS Code's user-profile `mcp.json`, if found on the machine | Written only if VS Code's user-data folder is actually detected — otherwise the script prints the exact JSON to paste in via "MCP: Add Server" → Global |
 | Same MCP servers | `~/.config/github-copilot/intellij/mcp.json` | Written per documentation, not yet hands-on confirmed |
 
-**One manual step this script can't do for you**: add `~/.copilot/agents`'s absolute path to VS Code's `chat.agentFilesLocations` user setting, so VS Code reads the same agent files CLI does instead of its own separate default location. The script prints the exact line to add, every time it runs.
+**`chat.agentFilesLocations` in VS Code's `settings.json` is now patched automatically** (`scripts/patch-vscode-settings.js`, called by `deploy:global`) — no manual step. Since `settings.json` is JSONC (comments and trailing commas allowed, which a plain `JSON.parse`/`stringify` round-trip would silently destroy), it's patched via surgical text insertion instead: the file is backed up first, unconditionally; if the key already exists it's left alone with instructions printed rather than risking a bad merge; the result is sanity-checked as valid JSON before anything is written, and the original is left untouched if that check fails. Tested against 6 scenarios (no file, plain JSON, comments + trailing commas, key already present, empty `{}`, pre-existing trailing comma) — all produce clean, valid output. If VS Code isn't installed on the machine running the deploy script, it says so and does nothing, same as the MCP config step.
 
 Re-run `npm run deploy:global` any time you change `sources/commands/*.md`, `sources/mcp-servers.json`, `.github/agents/*.agent.md`, or `.github/copilot-instructions.md`.
 

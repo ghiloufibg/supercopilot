@@ -8,6 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const HOME = os.homedir();
@@ -108,18 +109,14 @@ function deployMcpConfigs() {
   console.log(`mcp (JetBrains) -> ${jetbrainsConfigPath}  (written per documentation; not yet hands-on confirmed in a real IDE, see TESTING.md)`);
 }
 
-function printVsCodeAgentLocationsReminder() {
+function patchVsCodeAgentLocations() {
   const agentsPath = path.join(COPILOT_HOME, 'agents').replace(/\\/g, '/');
-  console.log(
-    `\nReminder: add this to VS Code's user settings.json (Command Palette -> "Preferences: Open User Settings (JSON)") ` +
-      `so VS Code also reads the same global agent files CLI uses, instead of just its own default location:\n` +
-      `  "chat.agentFilesLocations": { "${agentsPath}": true }\n` +
-      `(VS Code does not expand ~ — this must be the absolute path, as printed above.)`
-  );
+  console.log('');
+  execFileSync('node', [path.join(__dirname, 'patch-vscode-settings.js'), agentsPath], { stdio: 'inherit' });
 }
 
 deploySkills();
 deployAgents();
 deployInstructions();
 deployMcpConfigs();
-printVsCodeAgentLocationsReminder();
+patchVsCodeAgentLocations();

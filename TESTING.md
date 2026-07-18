@@ -17,13 +17,13 @@ This writes:
 - `~/.config/github-copilot/intellij/mcp.json` (written per documentation — this is one of the two things to verify below)
 - VS Code's user-profile `mcp.json`, **only if** VS Code's user-data folder is found on the machine. If it prints "NOT WRITTEN," open VS Code, run "MCP: Add Server" → Global from the Command Palette, and paste in the JSON the script printed.
 
-Then, by hand (the script can't edit VS Code's settings.json for you): open VS Code's Command Palette → "Preferences: Open User Settings (JSON)" and add the `chat.agentFilesLocations` line the script printed at the end of its output — this is what makes VS Code read the same `~/.copilot/agents` folder CLI uses.
+`chat.agentFilesLocations` in VS Code's `settings.json` is added automatically by the script now (backed up first, skipped safely if already present or if no VS Code install is found) — no manual step needed here. Worth opening `settings.json` afterward once just to eyeball that it looks right and your other settings/comments are untouched.
 
 Pick a real, non-trivial project repo to test *inside* — something with an actual stack, since `implement`'s auto-detection needs real manifest files to detect. You are **not** copying any plugin files into it; the whole point of this deployment is that it works from any repo without doing that.
 
 ## 2. VS Code
 
-- [ ] Open your test project in VS Code with GitHub Copilot Chat installed, having added the `chat.agentFilesLocations` setting above.
+- [ ] Open your test project in VS Code with GitHub Copilot Chat installed. Confirm `chat.agentFilesLocations` actually got added to your settings.json (see §1) and points at the real `~/.copilot/agents` path.
 - [ ] Type `/` in the chat input — confirm all 26 commands appear as invocable (sourced from `~/.copilot/skills`, not anything in the project repo).
 - [ ] Invoke `/implement "a small feature"` — confirm it detects the repo's actual stack rather than defaulting to React/JS.
 - [ ] Open the agent picker — confirm all 16 standalone personas + the `business-panel-orchestrator` appear. Confirm the 9 experts do **not** appear in the manual picker (`user-invocable: false` — delegate-only).
