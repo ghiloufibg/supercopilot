@@ -2,12 +2,19 @@
 // point (DESIGN.md §5b: "must be zero outbound network calls, local file store only").
 // The network-isolation test (test/network-isolation.test.js) statically checks this file
 // and its dependency tree never require()/import a network-capable module.
+//
+// Storage is GLOBAL BY DESIGN (decided explicitly, not cwd-relative): one shared memory store
+// across every project, not one per project. Previously this defaulted to `.copilot-memory/`
+// relative to process.cwd(), which meant the actual scope depended on wherever each IDE happens
+// to launch the MCP server process from -- untested, and not what was wanted once the server
+// itself became a global, shared install (see DESIGN.md's global-deployment revision).
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 
-const STORE_DIR = process.env.COPILOT_MEMORY_DIR || path.join(process.cwd(), '.copilot-memory');
+const STORE_DIR = process.env.COPILOT_MEMORY_DIR || path.join(os.homedir(), '.copilot', 'memory-data');
 const STORE_FILE = path.join(STORE_DIR, 'memory.json');
 
 async function ensureStore() {

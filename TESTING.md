@@ -29,7 +29,7 @@ Pick a real, non-trivial project repo to test *inside* — something with an act
 - [ ] Open the agent picker — confirm all 16 standalone personas + the `business-panel-orchestrator` appear. Confirm the 9 experts do **not** appear in the manual picker (`user-invocable: false` — delegate-only).
 - [ ] Invoke `/business-panel` on some sample content — confirm the orchestrator genuinely delegates to expert subagents (real separate agent invocations, not one response narrating all 9 voices).
 - [ ] Check the MCP server list — confirm exactly `context7`, `sequential-thinking`, `playwright`, `chrome-devtools`, `memory` are registered globally, visible regardless of which repo is open. Confirm the `memory` server actually starts.
-- [ ] Invoke `/save` in one project, close VS Code, reopen a **different** project, invoke `/load` — since the Memory MCP server's store path defaults to `.copilot-memory/` relative to cwd, check whether memory is scoped per-project or shared globally, and whether that matches what you'd expect. (This is a real design question the global deployment surfaces that per-repo testing wouldn't have: should project memory be per-project or global? Report back what you observe.)
+- [ ] Invoke `/save` in one project, close VS Code, reopen a **different** project, invoke `/load` — confirm memory carries over (it's designed to be shared globally now, at `~/.copilot/memory-data/`, not per-project — already proven with a raw JSON-RPC test in two unrelated directories, but confirm it holds through the actual `/save`/`/load` skills too, not just the raw tool calls).
 - [ ] Confirm Magic, Morphllm, Tavily are **not** registered anywhere.
 
 ## 3. Copilot CLI
@@ -50,6 +50,6 @@ Same functional checklist as VS Code/CLI, plus the two things specifically uncon
 Per surface: pass/fail per checkbox, plus specifically:
 - Did `/implement` correctly detect the stack?
 - Did Business Panel actually delegate to subagents, or narrate all 9 in one response?
-- Is the Memory MCP server's storage per-project or shared globally, and is that the behavior you actually want?
+- Does memory actually persist across two different projects via `/save`/`/load` (not just the raw tool calls already verified)?
 - Did JetBrains pick up the global `~/.copilot/` locations, or does it need something IDE-specific?
 - Did VS Code's user-data folder get found automatically, or did you have to configure the MCP config by hand?

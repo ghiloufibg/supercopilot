@@ -19,6 +19,16 @@ function copyFile(src, dest) {
   fs.copyFileSync(src, dest);
 }
 
+function copyDir(srcDir, destDir) {
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    const s = path.join(srcDir, entry.name);
+    const d = path.join(destDir, entry.name);
+    if (entry.isDirectory()) copyDir(s, d);
+    else fs.copyFileSync(s, d);
+  }
+}
+
 function deploySkills() {
   const srcDir = path.join(ROOT, '.github', 'skills');
   const destDir = path.join(COPILOT_HOME, 'skills');
@@ -61,15 +71,50 @@ function deployInstructions() {
   console.log(`instructions -> ${dest}  (confirmed global location for CLI; VS Code/JetBrains global instructions are settings-based, not a drop-in file — verify by hand)`);
 }
 
-function deployMcpConfigs() {
+function installMemoryServer() {
+  // Real install, not a reference: copies package.json + src/ (never node_modules/, never
+  // test/ -- those are dev-only) to a location that has nothing to do with where this repo
+  // lives, then runs npm install THERE. This is what makes it genuinely shared/global rather
+  // than every project's MCP config just pointing back at this dev repo's own path -- after
+  // this, the dev repo could be moved, renamed, or deleted and the installed copy keeps working.
+  const srcDir = path.join(ROOT, 'memory-mcp-server');
+  const destDir = path.join(COPILOT_HOME, 'mcp-servers', 'memory-mcp-server');
+
+  copyFile(path.join(srcDir, 'package.json'), path.join(destDir, 'package.json'));
+  copyDir(path.join(srcDir, 'src'), path.join(destDir, 'src'));
+  console.log(`memory server code -> ${destDir}  (package.json + src/ only; no test/, no node_modules/ copied)`);
+
+  try {
+    // shell: true is required on Windows -- npm is npm.cmd there, and execFileSync doesn't
+    // resolve through a shell by default, so without this it fails to find npm at all (found
+    // by testing: ran fine invoked directly, failed silently through execFileSync until this
+    // was added).
+    execFileSync('npm', ['install'], { cwd: destDir, stdio: 'inherit', shell: true });
+    console.log(`memory server deps -> installed at ${destDir} (shared by every project -- installed once, here, not per-project)`);
+  } catch (err) {
+    console.error(
+      `\nnpm install FAILED in ${destDir} -- see the output above for why (e.g. no registry access). ` +
+        `The memory server's code was still copied, but it won't run until its dependency is installed ` +
+        `-- either fix registry access and re-run "npm run deploy:global", or run "npm install" by hand ` +
+        `inside ${destDir}.\n`
+    );
+  }
+  return destDir;
+}
+
+function deployMcpConfigs(globalMemoryServerDir) {
   const { servers } = JSON.parse(fs.readFileSync(path.join(ROOT, 'sources', 'mcp-servers.json'), 'utf8'));
 
-  // Global configs need absolute paths, not ${workspaceFolder} — resolve the memory server's
-  // path against THIS repo's actual location on disk.
+  // Global configs need absolute paths, not ${workspaceFolder} — resolve every server's path,
+  // then override "memory" specifically to point at the just-installed global copy instead of
+  // wherever ${workspaceFolder} would have resolved to (this dev repo).
   const resolvedServers = {};
   for (const s of servers) {
     const args = s.args.map((a) => a.replace('${workspaceFolder}', ROOT.replace(/\\/g, '/')));
     resolvedServers[s.name] = { command: s.command, args, env: s.env };
+  }
+  if (resolvedServers.memory) {
+    resolvedServers.memory.args = [path.join(globalMemoryServerDir, 'src', 'index.js').replace(/\\/g, '/')];
   }
 
   // Copilot CLI — confirmed global location.
@@ -118,5 +163,6 @@ function patchVsCodeAgentLocations() {
 deploySkills();
 deployAgents();
 deployInstructions();
-deployMcpConfigs();
+const globalMemoryServerDir = installMemoryServer();
+deployMcpConfigs(globalMemoryServerDir);
 patchVsCodeAgentLocations();

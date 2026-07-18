@@ -108,9 +108,14 @@ Copies/generates this repo's content to the actual locations Copilot reads from 
 | 29 skills | `~/.copilot/skills/<name>/SKILL.md` | CLI, VS Code (JetBrains: preview) |
 | 31 agent files (flattened) | `~/.copilot/agents/*.agent.md` | CLI (JetBrains: likely, unconfirmed) |
 | `copilot-instructions.md` | `~/.copilot/copilot-instructions.md` | CLI only — VS Code/JetBrains global instructions are settings-based, not a drop-in file |
-| MCP servers (5, including `memory` with an absolute path) | `~/.copilot/mcp-config.json` | CLI — confirmed |
+| **Memory MCP server itself** (`package.json` + `src/`, never `test/` or `node_modules/`) | `~/.copilot/mcp-servers/memory-mcp-server/` — a real **install**, not a reference back into this repo | `npm install` is run there directly; confirmed working, including on Windows (`execFileSync` needs `shell: true` for `npm` — found and fixed during testing) |
+| MCP servers (5, `memory` pointing at the installed copy above, not this repo) | `~/.copilot/mcp-config.json` | CLI — confirmed |
 | Same MCP servers | VS Code's user-profile `mcp.json`, if found on the machine | Written only if VS Code's user-data folder is actually detected — otherwise the script prints the exact JSON to paste in via "MCP: Add Server" → Global |
 | Same MCP servers | `~/.config/github-copilot/intellij/mcp.json` | Written per documentation, not yet hands-on confirmed |
+
+**Memory storage is shared globally, by design** — `~/.copilot/memory-data/memory.json`, not scoped per-project. Verified live: wrote a key from one directory, read it back from a completely different one, got the same value.
+
+**This repo can now be moved, renamed, or deleted without breaking anything already deployed** — the installed memory server at `~/.copilot/mcp-servers/memory-mcp-server/` is a real, independent copy with its own `node_modules`, not a path back into this repo. Re-running `deploy:global` re-syncs it from whatever this repo currently contains.
 
 **`chat.agentFilesLocations` in VS Code's `settings.json` is now patched automatically** (`scripts/patch-vscode-settings.js`, called by `deploy:global`) — no manual step. Since `settings.json` is JSONC (comments and trailing commas allowed, which a plain `JSON.parse`/`stringify` round-trip would silently destroy), it's patched via surgical text insertion instead: the file is backed up first, unconditionally; if the key already exists it's left alone with instructions printed rather than risking a bad merge; the result is sanity-checked as valid JSON before anything is written, and the original is left untouched if that check fails. Tested against 6 scenarios (no file, plain JSON, comments + trailing commas, key already present, empty `{}`, pre-existing trailing comma) — all produce clean, valid output. If VS Code isn't installed on the machine running the deploy script, it says so and does nothing, same as the MCP config step.
 
