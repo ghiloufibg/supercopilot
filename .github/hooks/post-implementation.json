@@ -1,0 +1,12 @@
+{
+  "_comment": "pm-agent-style post-implementation capture (DESIGN.md §6, §7). Block/allow/log only — deliberately stays within the JetBrains-safe subset (preToolUse there can deny but not rewrite input, per DESIGN.md §5). VERIFY the exact hook schema against Copilot's current hooks reference before relying on this in production; written against the event names documented as of DESIGN.md's research (postToolUse, agentStop) but not yet hands-on tested against a real Copilot hook runtime.",
+  "hooks": {
+    "agentStop": [
+      {
+        "description": "Reminds pm-agent to capture what was implemented, once a session/agent run completes. Log-only — does not block or modify anything.",
+        "action": "log",
+        "message": "Session ended. If this involved a non-trivial implementation, invoke pm-agent to document patterns/decisions before closing out (DESIGN.md §5f pm-agent spec)."
+      }
+    ]
+  }
+}

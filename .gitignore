@@ -1,0 +1,9 @@
+# Dependencies
+node_modules/
+
+# Memory MCP server runtime state — never commit actual project memory
+.copilot-memory/
+
+# OS/editor cruft
+.DS_Store
+Thumbs.db

@@ -1,0 +1,14 @@
+{
+  "name": "@copilot-superclaude/memory-mcp-server",
+  "version": "0.2.0-no-deps",
+  "private": true,
+  "description": "Local-only MCP server implementing write_memory/read_memory/list_memories/delete_memory. Zero outbound network calls AND zero npm dependencies (Revision 9 — no npm registry access in the target environment) — no `npm install` needed at all, just node.",
+  "type": "module",
+  "bin": {
+    "memory-mcp-server": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js"
+  }
+}

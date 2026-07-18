@@ -1,0 +1,11 @@
+{
+  "name": "copilot-superclaude",
+  "version": "0.1.0-phase1",
+  "private": true,
+  "description": "SuperClaude-for-Copilot -- see DESIGN.md. Provisional name pending DESIGN.md §9.1.",
+  "scripts": {
+    "generate": "node scripts/generate.js all",
+    "generate:skills": "node scripts/generate.js skills",
+    "generate:mcp-configs": "node scripts/generate.js mcp-configs"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "_comment": "Default corporate-safe MCP profile (DESIGN.md §5b/§5c/§7). No Magic, Morphllm, or Tavily — see DESIGN.md for why. Memory MCP server (Phase 3, DESIGN.md §6 Tier B) now included, tested (memory-mcp-server/test/), and verified zero-outbound-network.",
+  "servers": [
+    {
+      "name": "context7",
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"],
+      "env": {}
+    },
+    {
+      "name": "sequential-thinking",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+      "env": {}
+    },
+    {
+      "name": "playwright",
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp"],
+      "env": {}
+    },
+    {
+      "name": "chrome-devtools",
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp"],
+      "env": {}
+    },
+    {
+      "name": "memory",
+      "command": "node",
+      "args": ["${workspaceFolder}/memory-mcp-server/src/index.js"],
+      "env": {}
+    }
+  ]
+}
