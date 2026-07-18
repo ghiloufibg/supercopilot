@@ -1,6 +1,8 @@
 # copilot-superclaude (provisional name — see DESIGN.md §9.1)
 
-A GitHub Copilot port of the SuperClaude framework, targeting Copilot CLI, VS Code, and JetBrains identically. Full design rationale, the corporate-safety review, and the language-bias audit are in [`DESIGN.md`](./DESIGN.md) — read that before touching anything here.
+A GitHub Copilot port of the SuperClaude framework, targeting Copilot CLI, VS Code, and JetBrains identically.
+
+**Just want to install and use it? See [`GETTING-STARTED.md`](./GETTING-STARTED.md).** Full design rationale, the corporate-safety review, and the language-bias audit are in [`DESIGN.md`](./DESIGN.md) — read that if you're changing anything here, not just using it.
 
 **Status: Phases 0–3 built and unit-tested, deployed globally (`~/.copilot/`). Not yet exercised in a real Copilot session — that's on you, see `TESTING.md`.**
 
