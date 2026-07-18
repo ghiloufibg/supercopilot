@@ -2,9 +2,12 @@
 // network calls" as a hard requirement for this server, but that was only ever a promise to
 // code-review it once. This makes it an actual, automated, re-run-on-every-change check.
 //
-// Revision 9: this server has zero npm dependencies (no npm registry access in the target
-// environment), so this check now covers 100% of the server's code, not just "our files plus
-// a spot-check of one SDK module" — there is no supply chain left to leave unaudited.
+// Scope, stated honestly: this statically checks OUR source files (src/store.js, src/index.js)
+// for network-capable imports, and spot-checks that the SDK's stdio transport (the only SDK
+// module we actually import) doesn't itself import networking modules — stdio transport is
+// process stdin/stdout by protocol design, not sockets. It does NOT attempt a full supply-chain
+// audit of every transitive dependency; that's a separate, ongoing concern, not something a unit
+// test can fully close.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,15 +34,10 @@ test('store.js has no network-capable imports', async () => {
   await assertNoNetworkImports('src/store.js');
 });
 
-test('index.js has no network-capable imports', async () => {
+test('index.js has no network-capable imports beyond the MCP SDK itself', async () => {
   await assertNoNetworkImports('src/index.js');
 });
 
-test('package.json declares zero dependencies', async () => {
-  const { readFile } = await import('node:fs/promises');
-  const path = await import('node:path');
-  const pkg = JSON.parse(
-    await readFile(path.resolve(import.meta.dirname, '..', 'package.json'), 'utf8')
-  );
-  assert.equal(pkg.dependencies, undefined, 'package.json should declare no dependencies at all');
+test('the MCP SDK stdio transport module has no network-capable imports', async () => {
+  await assertNoNetworkImports('node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js');
 });
