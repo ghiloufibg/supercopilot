@@ -1,52 +1,55 @@
-# Manual Test Checklist — Full Plugin
+# Manual Test Checklist — Full Plugin (Global Deployment)
 
-Corresponds to `DESIGN.md` §7/§8/§10. Do this in a real test repo, not this design repo itself. Pick a real, non-trivial repo — `implement`'s auto-detection needs real manifest files to detect.
+Corresponds to `DESIGN.md` §7/§8/§10 (Revision 10: global, not per-repo). Everything here is deployed once, globally, and then exercised inside whatever real project repo you happen to be working in — you no longer copy plugin files into each test repo individually.
 
 ## 1. Install
 
-Copy these into the test repo's root:
 ```
-.github/copilot-instructions.md
-.github/agents/            (22 files + 9 in agents/experts/)
-.github/skills/             (29 folders)
-.github/prompts/             (26 files)
-.github/hooks/post-implementation.json
-.vscode/mcp.json
-.copilot/mcp-config.json
-memory-mcp-server/           (the whole directory — the server needs to actually run from somewhere)
+cd supercopilot
+npm run deploy:global
 ```
-Then `cd memory-mcp-server && npm install` in the test repo (or point the MCP config's path at wherever you keep it).
 
-No separate JetBrains file to worry about — per research (DESIGN.md §9.4, Revision 8), JetBrains reads the same `.vscode/mcp.json` you just copied. That's a documentation-based conclusion, not yet hands-on confirmed — §4 below is where you check it actually holds.
+This writes:
+- `~/.copilot/skills/` (29 skills)
+- `~/.copilot/agents/` (31 agent files, flattened)
+- `~/.copilot/copilot-instructions.md`
+- `~/.copilot/mcp-config.json` (5 servers, `memory`'s path already absolute)
+- `~/.config/github-copilot/intellij/mcp.json` (written per documentation — this is one of the two things to verify below)
+- VS Code's user-profile `mcp.json`, **only if** VS Code's user-data folder is found on the machine. If it prints "NOT WRITTEN," open VS Code, run "MCP: Add Server" → Global from the Command Palette, and paste in the JSON the script printed.
+
+Then, by hand (the script can't edit VS Code's settings.json for you): open VS Code's Command Palette → "Preferences: Open User Settings (JSON)" and add the `chat.agentFilesLocations` line the script printed at the end of its output — this is what makes VS Code read the same `~/.copilot/agents` folder CLI uses.
+
+Pick a real, non-trivial project repo to test *inside* — something with an actual stack, since `implement`'s auto-detection needs real manifest files to detect. You are **not** copying any plugin files into it; the whole point of this deployment is that it works from any repo without doing that.
 
 ## 2. VS Code
 
-- [ ] Open the test repo in VS Code with GitHub Copilot Chat installed.
-- [ ] Type `/` in the chat input — confirm all 26 commands appear as invocable.
+- [ ] Open your test project in VS Code with GitHub Copilot Chat installed, having added the `chat.agentFilesLocations` setting above.
+- [ ] Type `/` in the chat input — confirm all 26 commands appear as invocable (sourced from `~/.copilot/skills`, not anything in the project repo).
 - [ ] Invoke `/implement "a small feature"` — confirm it detects the repo's actual stack rather than defaulting to React/JS.
-- [ ] Open the agent picker — confirm all 16 standalone personas + the `business-panel-orchestrator` appear. Confirm the 9 experts under `experts/` do **not** appear in the manual picker (they're `user-invocable: false` — delegate-only).
-- [ ] Invoke `/business-panel` on some sample content — confirm the orchestrator genuinely delegates to expert subagents (check for real separate agent invocations, not one response narrating all 9 voices).
-- [ ] Check the MCP server list — confirm exactly `context7`, `sequential-thinking`, `playwright`, `chrome-devtools`, `memory` are registered. Confirm the `memory` server actually starts (no crash) — if it fails to launch, check whether `${workspaceFolder}` resolved correctly in `.vscode/mcp.json`.
-- [ ] Invoke `/save` then `/load` in a fresh session — confirm context actually persists (this is the real point of Tier B).
-- [ ] Invoke `/test --type e2e` on something with no browser UI — confirm it doesn't blindly try to launch Playwright against nothing.
+- [ ] Open the agent picker — confirm all 16 standalone personas + the `business-panel-orchestrator` appear. Confirm the 9 experts do **not** appear in the manual picker (`user-invocable: false` — delegate-only).
+- [ ] Invoke `/business-panel` on some sample content — confirm the orchestrator genuinely delegates to expert subagents (real separate agent invocations, not one response narrating all 9 voices).
+- [ ] Check the MCP server list — confirm exactly `context7`, `sequential-thinking`, `playwright`, `chrome-devtools`, `memory` are registered globally, visible regardless of which repo is open. Confirm the `memory` server actually starts.
+- [ ] Invoke `/save` in one project, close VS Code, reopen a **different** project, invoke `/load` — since the Memory MCP server's store path defaults to `.copilot-memory/` relative to cwd, check whether memory is scoped per-project or shared globally, and whether that matches what you'd expect. (This is a real design question the global deployment surfaces that per-repo testing wouldn't have: should project memory be per-project or global? Report back what you observe.)
 - [ ] Confirm Magic, Morphllm, Tavily are **not** registered anywhere.
 
 ## 3. Copilot CLI
 
-- [ ] Same command/persona checks as VS Code, via explicit `/name` invocation (native on CLI, no prompt-file mirror needed).
-- [ ] Confirm `.copilot/mcp-config.json`'s `memory` server entry actually launches — research says `${workspaceFolder}` substitution is supported here, but confirm it resolves correctly in practice. If it doesn't start, replace the path with an absolute one and note that in `sources/mcp-servers.json` for regeneration.
+- [ ] Same command/persona checks as VS Code, via explicit `/name` invocation, run from inside your test project's directory.
+- [ ] Confirm `~/.copilot/mcp-config.json`'s `memory` server entry launches correctly using its absolute path.
 
 ## 4. JetBrains
 
-Same functional checklist as VS Code/CLI. The one thing specifically worth double-checking here:
+Same functional checklist as VS Code/CLI, plus the two things specifically unconfirmed here:
 
-- [ ] Confirm the MCP servers from `.vscode/mcp.json` actually show up and load in JetBrains without any separate config file — this is the research conclusion from DESIGN.md §9.4 that hasn't been hands-on confirmed yet. If they *don't* load, check Settings → Tools → GitHub Copilot → MCP for a "Configure" option pointing at a different file (e.g. the global `~/.config/github-copilot/intellij/mcp.json`), and report back what you find.
-- [ ] Register the `post-implementation.json` hook if JetBrains' hook UI requires separate registration — confirm the `agentStop` event actually fires (JetBrains hooks were "preview" as of this design's research; behavior may differ from what's written).
+- [ ] Confirm `~/.copilot/agents` and `~/.copilot/skills` are actually picked up (Revision 10's claim that JetBrains shares CLI's global locations via its shared harness — plausible, not yet proven).
+- [ ] Confirm `~/.config/github-copilot/intellij/mcp.json` is the file JetBrains actually reads for global MCP servers — if the 5 servers don't show up, check Settings → Tools → GitHub Copilot → MCP for what file it's actually pointing at, and report back.
+- [ ] Register the `post-implementation.json` hook if JetBrains' hook UI requires separate registration — confirm the `agentStop` event actually fires (JetBrains hooks were "preview" as of this design's research).
 
 ## 5. What to report back
 
 Per surface: pass/fail per checkbox, plus specifically:
 - Did `/implement` correctly detect the stack?
 - Did Business Panel actually delegate to subagents, or narrate all 9 in one response?
-- Did the `memory` server launch in CLI (the `${workspaceFolder}` question)?
-- Did JetBrains pick up `.vscode/mcp.json` directly, or did it need something else?
+- Is the Memory MCP server's storage per-project or shared globally, and is that the behavior you actually want?
+- Did JetBrains pick up the global `~/.copilot/` locations, or does it need something IDE-specific?
+- Did VS Code's user-data folder get found automatically, or did you have to configure the MCP config by hand?

@@ -6,6 +6,7 @@
   "scripts": {
     "generate": "node scripts/generate.js all",
     "generate:skills": "node scripts/generate.js skills",
-    "generate:mcp-configs": "node scripts/generate.js mcp-configs"
+    "generate:mcp-configs": "node scripts/generate.js mcp-configs",
+    "deploy:global": "node scripts/generate.js all && node scripts/deploy-global.js"
   }
 }

@@ -2,9 +2,11 @@
 
 A GitHub Copilot port of the SuperClaude framework, targeting Copilot CLI, VS Code, and JetBrains identically. Full design rationale, the corporate-safety review, and the language-bias audit are in [`DESIGN.md`](./DESIGN.md) — read that before touching anything here.
 
-**Status: Phases 0–3 built and unit-tested. Not yet installed or exercised in a real Copilot session — that's on you, see `TESTING.md`.**
+**Status: Phases 0–3 built and unit-tested, deployed globally (`~/.copilot/`). Not yet exercised in a real Copilot session — that's on you, see `TESTING.md`.**
 
 **Personal-use project** — no license, no publishing, no distribution tooling. Built for one person's own Copilot setup, not for others to install.
+
+**Deployed globally, not per-repo.** This repo is the version-controlled source of truth; `npm run deploy:global` copies/generates everything out to `~/.copilot/` (and the VS Code/JetBrains global MCP config locations), so it applies across every project, not just one. See "Global Deployment" below.
 
 ## Prerequisites
 
@@ -77,21 +79,45 @@ The Memory MCP server (the one piece of custom code here) has an automated test 
 ```
 DESIGN.md                        # the actual design document — start here
 sources/commands/*.md            # authored once per command (26); generates skill + prompt pair
-sources/mcp-servers.json         # authored once; generates all three per-surface MCP configs
-scripts/generate.js               # the generator (Node, no dependencies)
+sources/mcp-servers.json         # authored once; generates every MCP config, local and global
+scripts/generate.js               # local generator: sources -> .github/skills, .github/prompts, .copilot, .vscode
+scripts/deploy-global.js          # deploys this repo's content OUT to ~/.copilot/ and the IDEs' global MCP configs
 .github/agents/*.agent.md         # 16 personas + orchestrator + 5 behavioral-mode agents — authored directly
 .github/agents/experts/*.agent.md # 9 Business Panel expert subagents, user-invocable: false
 .github/skills/*/SKILL.md         # 29 skills (26 generated commands + bulk-refactor + ui-components + deep-research)
-.github/prompts/*.prompt.md       # generated — explicit /name invocation mirror for VS Code + JetBrains
+.github/prompts/*.prompt.md       # generated locally only — no global equivalent exists, see DESIGN.md Revision 10
 .github/hooks/post-implementation.json  # pm-agent capture reminder — UNVERIFIED schema, see below
-.copilot/mcp-config.json          # generated (Copilot CLI)
-.vscode/mcp.json                   # generated — also read directly by JetBrains, same file (Revision 8)
+.copilot/mcp-config.json          # generated locally (repo-relative, for testing this repo standalone)
+.vscode/mcp.json                   # generated locally, same reason
 memory-mcp-server/                # Tier B: the Memory MCP server, real Node code + tests
 ```
 
-## Regenerating
+This repo is the version-controlled **source of truth**. Nothing in `~/.copilot/`, VS Code's user-profile `mcp.json`, or JetBrains's global `mcp.json` should be hand-edited — edit here and redeploy instead.
+
+## Global Deployment
+
 ```
-npm run generate            # both skills+prompts and MCP configs
+npm run deploy:global
+```
+
+Copies/generates this repo's content to the actual locations Copilot reads from globally, across every project on the machine — not just this repo. See `DESIGN.md` Revision 10 for the full research behind each path.
+
+| What | Deployed to | Confirmed for |
+|---|---|---|
+| 29 skills | `~/.copilot/skills/<name>/SKILL.md` | CLI, VS Code (JetBrains: preview) |
+| 31 agent files (flattened) | `~/.copilot/agents/*.agent.md` | CLI (JetBrains: likely, unconfirmed) |
+| `copilot-instructions.md` | `~/.copilot/copilot-instructions.md` | CLI only — VS Code/JetBrains global instructions are settings-based, not a drop-in file |
+| MCP servers (5, including `memory` with an absolute path) | `~/.copilot/mcp-config.json` | CLI — confirmed |
+| Same MCP servers | VS Code's user-profile `mcp.json`, if found on the machine | Written only if VS Code's user-data folder is actually detected — otherwise the script prints the exact JSON to paste in via "MCP: Add Server" → Global |
+| Same MCP servers | `~/.config/github-copilot/intellij/mcp.json` | Written per documentation, not yet hands-on confirmed |
+
+**One manual step this script can't do for you**: add `~/.copilot/agents`'s absolute path to VS Code's `chat.agentFilesLocations` user setting, so VS Code reads the same agent files CLI does instead of its own separate default location. The script prints the exact line to add, every time it runs.
+
+Re-run `npm run deploy:global` any time you change `sources/commands/*.md`, `sources/mcp-servers.json`, `.github/agents/*.agent.md`, or `.github/copilot-instructions.md`.
+
+## Local Testing (this repo standalone)
+```
+npm run generate            # both skills+prompts and MCP configs, written locally to .github/.vscode/.copilot
 npm run generate:skills
 npm run generate:mcp-configs
 ```
