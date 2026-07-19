@@ -4,6 +4,10 @@ node_modules/
 # Memory MCP server runtime state — never commit actual project memory
 .copilot-memory/
 
+# Jira/Confluence tool credentials for local script development/testing before deploy —
+# tools/.env.example (placeholders only) stays committed, tools/.env (real values) never does
+tools/.env
+
 # OS/editor cruft
 .DS_Store
 Thumbs.db

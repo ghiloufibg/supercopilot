@@ -14,19 +14,49 @@ const ROOT = path.resolve(__dirname, '..');
 const HOME = os.homedir();
 const COPILOT_HOME = process.env.COPILOT_HOME || path.join(HOME, '.copilot');
 
+// TOOLS-DESIGN.md — Jira/Confluence read-only script tools, installed separately from the
+// plugin itself via --all or --tool=jira,confluence, opt-in (not part of the default deploy).
+const KNOWN_TOOLS = ['jira', 'confluence'];
+const TOOL_SCRIPT_FILENAMES = { jira: 'jira-fetch.js', confluence: 'confluence-fetch.js' };
+const TOOL_SKILL_PLACEHOLDERS = { jira: '{{JIRA_SCRIPT_PATH}}', confluence: '{{CONFLUENCE_SCRIPT_PATH}}' };
+
 function copyFile(src, dest) {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(src, dest);
 }
 
-function copyDir(srcDir, destDir) {
+function copyDir(srcDir, destDir, excludeNames = []) {
   fs.mkdirSync(destDir, { recursive: true });
   for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    if (excludeNames.includes(entry.name)) continue;
     const s = path.join(srcDir, entry.name);
     const d = path.join(destDir, entry.name);
-    if (entry.isDirectory()) copyDir(s, d);
+    if (entry.isDirectory()) copyDir(s, d, excludeNames);
     else fs.copyFileSync(s, d);
   }
+}
+
+// TOOLS-DESIGN.md §7 — validated up front, before any deploy step runs at all. An unrecognized
+// --tool= name is a hard failure: nothing gets deployed for the run, not even the core plugin,
+// rather than silently skipping the typo and partially succeeding.
+function parseRequestedTools(argv) {
+  if (argv.includes('--all')) return new Set(KNOWN_TOOLS);
+  const toolArg = argv.find((a) => a.startsWith('--tool='));
+  if (!toolArg) return new Set();
+  const names = toolArg
+    .slice('--tool='.length)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const unknown = names.filter((n) => !KNOWN_TOOLS.includes(n));
+  if (unknown.length > 0) {
+    console.error(
+      `deploy-global: unknown --tool value(s): ${unknown.join(', ')}. Known tools: ${KNOWN_TOOLS.join(', ')}. ` +
+        `Nothing was deployed for this run -- fix the --tool value and re-run.`
+    );
+    process.exit(1);
+  }
+  return new Set(names);
 }
 
 function deploySkills() {
@@ -160,9 +190,60 @@ function patchVsCodeAgentLocations() {
   execFileSync('node', [path.join(__dirname, 'patch-vscode-settings.js'), agentsPath], { stdio: 'inherit' });
 }
 
+function deployTools(requestedTools) {
+  // Opt-in only -- no flags means no tools installed, unchanged from before this existed
+  // (TOOLS-DESIGN.md §7).
+  if (requestedTools.size === 0) return;
+
+  const srcRoot = path.join(ROOT, 'tools');
+  const destRoot = path.join(COPILOT_HOME, 'tools');
+
+  // Sibling to skills/agents/mcp-servers, not inside any of them -- installed separately from
+  // the plugin itself (TOOLS-DESIGN.md §3). Shared package.json declares ESM for every script
+  // under destRoot; Node resolves it by walking up from each script's own directory, so this one
+  // file (no dependencies to install) covers jira/, confluence/, and lib/ alike.
+  copyFile(path.join(srcRoot, 'package.json'), path.join(destRoot, 'package.json'));
+  copyDir(path.join(srcRoot, 'lib'), path.join(destRoot, 'lib'));
+
+  // Created from the template only if missing -- an existing .env (real credentials) is never
+  // overwritten by a re-install (TOOLS-DESIGN.md §4/§7).
+  const envDest = path.join(destRoot, '.env');
+  if (!fs.existsSync(envDest)) {
+    copyFile(path.join(srcRoot, '.env.example'), envDest);
+    console.log(`tools .env  -> ${envDest}  (created from template -- fill in real credentials before use)`);
+  } else {
+    console.log(`tools .env  -> ${envDest}  (already exists, left untouched)`);
+  }
+
+  for (const name of requestedTools) {
+    const toolDestDir = path.join(destRoot, name);
+    copyDir(path.join(srcRoot, name), toolDestDir, ['test']);
+
+    // Stamp the resolved absolute script path into the already-deployed skill, same
+    // resolve-at-deploy-time idiom deployMcpConfigs() already uses for ${workspaceFolder} and
+    // the memory server's args (TOOLS-DESIGN.md §5) -- avoids relying on shell tilde-expansion,
+    // which isn't portable across bash/zsh/PowerShell.
+    const scriptPath = path.join(toolDestDir, TOOL_SCRIPT_FILENAMES[name]).replace(/\\/g, '/');
+    const skillPath = path.join(COPILOT_HOME, 'skills', name, 'SKILL.md');
+    if (fs.existsSync(skillPath)) {
+      const patched = fs.readFileSync(skillPath, 'utf8').split(TOOL_SKILL_PLACEHOLDERS[name]).join(scriptPath);
+      fs.writeFileSync(skillPath, patched);
+      console.log(`tool: ${name} -> ${toolDestDir}  (skill patched with resolved script path)`);
+    } else {
+      console.log(
+        `tool: ${name} -> ${toolDestDir}  (WARNING: ${skillPath} not found -- deploySkills() should have written it first)`
+      );
+    }
+  }
+}
+
+// Validated first, before any deploy step -- an invalid --tool= value aborts the entire run.
+const requestedTools = parseRequestedTools(process.argv.slice(2));
+
 deploySkills();
 deployAgents();
 deployInstructions();
 const globalMemoryServerDir = installMemoryServer();
 deployMcpConfigs(globalMemoryServerDir);
 patchVsCodeAgentLocations();
+deployTools(requestedTools);
