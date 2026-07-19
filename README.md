@@ -2,7 +2,7 @@
 
 A GitHub Copilot port of the SuperClaude framework, targeting Copilot CLI, VS Code, and JetBrains identically.
 
-**Just want to install and use it? See [`GETTING-STARTED.md`](./GETTING-STARTED.md).** Full design rationale, the corporate-safety review, and the language-bias audit are in [`DESIGN.md`](./DESIGN.md) — read that if you're changing anything here, not just using it.
+**Just want to install and use it? See [`GETTING-STARTED.md`](./GETTING-STARTED.md).** Full design rationale, the corporate-safety review, and the language-bias audit are in [`DESIGN.md`](./DESIGN.md) — read that if you're changing anything here, not just using it. The optional read-only Jira/Confluence script tools have their own design doc: [`TOOLS-DESIGN.md`](./TOOLS-DESIGN.md).
 
 **Status: Phases 0–3 built and unit-tested, deployed globally (`~/.copilot/`). Not yet exercised in a real Copilot session — that's on you, see `TESTING.md`.**
 
@@ -22,7 +22,7 @@ A GitHub Copilot port of the SuperClaude framework, targeting Copilot CLI, VS Co
 
 Every command below is invoked as `/name` in Copilot Chat (CLI/VS Code/JetBrains alike). Personas either activate automatically based on what you're doing, or you can pick one manually from the agent picker.
 
-### Commands (26)
+### Commands (28)
 
 **Core development**
 - `implement` — build a feature, auto-detecting the repo's actual stack (Node/Python/Java/.NET/Go/Rust) rather than assuming JS
@@ -63,6 +63,10 @@ Every command below is invoked as `/name` in Copilot Chat (CLI/VS Code/JetBrains
 - `select-tool` — routes an operation to the right underlying tool (symbol rename vs. bulk pattern edit vs. memory)
 - `pm` — the default orchestration layer: delegates to the right persona automatically and keeps a running record of what was built and why
 
+**External integrations** (opt-in, installed separately from the plugin — see below)
+- `jira` — read-only issue/search/comment lookups via a local script, not an MCP tool call, to avoid the standing token cost of a company Jira MCP server
+- `confluence` — same idea for read-only page/search/child-page lookups
+
 ### Personas (17) — architecture, quality, and specialist expertise
 `system-architect`, `backend-architect`, `frontend-architect`, `devops-architect`, `security-engineer`, `performance-engineer`, `quality-engineer`, `refactoring-expert`, `python-expert`, `requirements-analyst`, `root-cause-analyst`, `technical-writer`, `learning-guide`, `socratic-mentor`, `pm-agent`, `deep-research-agent`, plus the `business-panel-orchestrator` (delegates to the 9 experts above, kept out of the manual picker).
 
@@ -80,19 +84,21 @@ The Memory MCP server (the one piece of custom code here) has an automated test 
 ## Layout
 ```
 DESIGN.md                        # the actual design document — start here
-sources/commands/*.md            # authored once per command (26); generates skill + prompt pair
+TOOLS-DESIGN.md                  # design doc for the optional Jira/Confluence script tools
+sources/commands/*.md            # authored once per command (28); generates skill + prompt pair
 sources/mcp-servers.json         # authored once; generates every MCP config, local and global
 scripts/generate.js               # local generator: sources -> .github/skills, .github/prompts, .copilot, .vscode
-scripts/deploy-global.js          # deploys this repo's content OUT to ~/.copilot/ and the IDEs' global MCP configs
+scripts/deploy-global.js          # deploys this repo's content OUT to ~/.copilot/ and the IDEs' global MCP configs; also handles --all/--tool=jira,confluence
 scripts/patch-vscode-settings.js  # surgically adds chat.agentFilesLocations to VS Code's settings.json, comments-safe
 .github/agents/*.agent.md         # 16 personas + orchestrator + 5 behavioral-mode agents — authored directly
 .github/agents/experts/*.agent.md # 9 Business Panel expert subagents, user-invocable: false
-.github/skills/*/SKILL.md         # 29 skills (26 generated commands + bulk-refactor + ui-components + deep-research)
+.github/skills/*/SKILL.md         # 31 skills (28 generated commands, incl. jira/confluence, + bulk-refactor + ui-components + deep-research)
 .github/prompts/*.prompt.md       # generated locally only — no global equivalent exists, see DESIGN.md Revision 10
 .github/hooks/post-implementation.json  # pm-agent capture reminder — UNVERIFIED schema, see below
 .copilot/mcp-config.json          # generated locally (repo-relative, for testing this repo standalone)
 .vscode/mcp.json                   # generated locally, same reason
 memory-mcp-server/                # Tier B: the Memory MCP server, real Node code + tests
+tools/                            # read-only Jira/Confluence script tools — NOT deployed by default, see TOOLS-DESIGN.md
 ```
 
 This repo is the version-controlled **source of truth**. Nothing in `~/.copilot/`, VS Code's user-profile `mcp.json`, or JetBrains's global `mcp.json` should be hand-edited — edit here and redeploy instead.
@@ -107,7 +113,7 @@ Copies/generates this repo's content to the actual locations Copilot reads from 
 
 | What | Deployed to | Confirmed for |
 |---|---|---|
-| 29 skills | `~/.copilot/skills/<name>/SKILL.md` | CLI, VS Code (JetBrains: preview) |
+| 31 skills | `~/.copilot/skills/<name>/SKILL.md` | CLI, VS Code (JetBrains: preview) |
 | 31 agent files (flattened) | `~/.copilot/agents/*.agent.md` | CLI (JetBrains: likely, unconfirmed) |
 | `copilot-instructions.md` | `~/.copilot/copilot-instructions.md` | CLI only — VS Code/JetBrains global instructions are settings-based, not a drop-in file |
 | **Memory MCP server itself** (`package.json` + `src/`, never `test/` or `node_modules/`) | `~/.copilot/mcp-servers/memory-mcp-server/` — a real **install**, not a reference back into this repo | `npm install` is run there directly; confirmed working, including on Windows (`execFileSync` needs `shell: true` for `npm` — found and fixed during testing) |
@@ -120,6 +126,8 @@ Copies/generates this repo's content to the actual locations Copilot reads from 
 **This repo can now be moved, renamed, or deleted without breaking anything already deployed** — the installed memory server at `~/.copilot/mcp-servers/memory-mcp-server/` is a real, independent copy with its own `node_modules`, not a path back into this repo. Re-running `deploy:global` re-syncs it from whatever this repo currently contains.
 
 **`chat.agentFilesLocations` in VS Code's `settings.json` is now patched automatically** (`scripts/patch-vscode-settings.js`, called by `deploy:global`) — no manual step. Since `settings.json` is JSONC (comments and trailing commas allowed, which a plain `JSON.parse`/`stringify` round-trip would silently destroy), it's patched via surgical text insertion instead: the file is backed up first, unconditionally; if the key already exists it's left alone with instructions printed rather than risking a bad merge; the result is sanity-checked as valid JSON before anything is written, and the original is left untouched if that check fails. Tested against 6 scenarios (no file, plain JSON, comments + trailing commas, key already present, empty `{}`, pre-existing trailing comma) — all produce clean, valid output. If VS Code isn't installed on the machine running the deploy script, it says so and does nothing, same as the MCP config step.
+
+**Jira/Confluence script tools are opt-in, not part of the default deploy.** The `jira`/`confluence` skills are always deployed like any other skill, but the underlying scripts they shell out to are not — run `npm run deploy:global -- --all` (both tools) or `-- --tool=jira,confluence` (either one) to also install them to `~/.copilot/tools/`, a new sibling to `skills/`/`agents/`/`mcp-servers/`, not bundled inside the plugin itself. Without one of those flags, the skill exists but the script path it references was never resolved, and the skill itself is written to recognize that and say the tool isn't installed rather than fail confusingly. An unrecognized `--tool=` name aborts the whole deploy run, deploying nothing at all. See `TOOLS-DESIGN.md` for the full rationale (in particular, why this is a plain script and not an MCP server).
 
 Re-run `npm run deploy:global` any time you change `sources/commands/*.md`, `sources/mcp-servers.json`, `.github/agents/*.agent.md`, or `.github/copilot-instructions.md`.
 
@@ -140,7 +148,7 @@ npm start          # runs the server directly over stdio, for manual smoke-testi
 ```
 
 ## What's verified so far (by me, automated)
-- Generator produces structurally correct output for all 26 commands, checked against the documented CLI (`mcpServers`)/VS Code (`servers`) formats.
+- Generator produces structurally correct output for all 28 commands, checked against the documented CLI (`mcpServers`)/VS Code (`servers`) formats.
 - Magic/Morphllm/Tavily confirmed absent everywhere, not just unused.
 - Memory MCP server: all 8 tests pass, including a concurrent-write race the tests actually caught and a real fix had to be made for (see `memory-mcp-server/src/store.js`'s mutation queue).
 - Memory MCP server responds correctly to a real MCP `initialize` handshake and lists all 4 tools correctly via `tools/list` (manually smoke-tested, not just unit-tested in isolation).
@@ -152,7 +160,7 @@ npm start          # runs the server directly over stdio, for manual smoke-testi
 Both still need the actual hands-on check in `TESTING.md` — documentation research is high-confidence, not proof.
 
 ## What's NOT yet verified (needs you, with real IDEs — see `TESTING.md`)
-- **Nothing has been loaded into a real Copilot CLI, VS Code, or JetBrains session.** All 26 commands, 17 personas, and the Memory MCP server need to be installed into an actual test repo and exercised in all three surfaces.
+- **Nothing has been loaded into a real Copilot CLI, VS Code, or JetBrains session.** All 28 commands, 17 personas, and the Memory MCP server need to be installed into an actual test repo and exercised in all three surfaces. The Jira/Confluence scripts additionally need a real Atlassian Cloud instance to smoke-test against — not yet done, see `TOOLS-DESIGN.md` §9.
 - **`.github/hooks/post-implementation.json`'s exact schema is unverified** against a real Copilot hooks runtime — written against documented event names (`agentStop`) but not hands-on tested.
 - **Business Panel's real subagent delegation** (orchestrator → 9 experts) needs an actual run in each surface to confirm genuine delegation, not just file structure correctness.
 

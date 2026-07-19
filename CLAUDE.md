@@ -4,19 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A GitHub Copilot port of the SuperClaude framework: 26 commands, 17 personas (+ 9 Business Panel expert subagents), 7 behavioral modes, and a custom Memory MCP server, targeting Copilot CLI, VS Code, and JetBrains identically. It is a **generator + deployer**, not an app — the actual product is the set of files it writes into `~/.copilot/` (and the IDEs' global MCP config locations) so the plugin applies to every project on the machine, not just this repo.
+A GitHub Copilot port of the SuperClaude framework: 28 commands, 17 personas (+ 9 Business Panel expert subagents), 7 behavioral modes, and a custom Memory MCP server, targeting Copilot CLI, VS Code, and JetBrains identically. It is a **generator + deployer**, not an app — the actual product is the set of files it writes into `~/.copilot/` (and the IDEs' global MCP config locations) so the plugin applies to every project on the machine, not just this repo.
 
 This is a **personal-use project** for one person's own Copilot setup — no license, no publishing, no distribution tooling.
 
 **Read `DESIGN.md` before changing anything here** — it's the actual design document (70KB), including the corporate-safety review and language-bias audit behind every non-obvious decision. This CLAUDE.md is a navigation aid, not a substitute for it.
 
+Alongside the plugin, `tools/` holds a second, separate capability: read-only Jira/Confluence REST fetch scripts. **Read `TOOLS-DESIGN.md` before touching `tools/`** — it explains why these are plain subprocess scripts rather than MCP servers (token cost — the user's company already runs its own Jira/Confluence MCP servers) and why they install to a location distinct from the plugin itself.
+
 ## Source of truth vs. generated output
 
 This is the single most important thing to internalize before editing:
 
-- **Author here:** `sources/commands/*.md` (26 files), `sources/mcp-servers.json`, `.github/agents/*.agent.md` (personas + orchestrator + mode agents), `.github/agents/experts/*.agent.md` (9 Business Panel experts), `.github/copilot-instructions.md`.
+- **Author here:** `sources/commands/*.md` (28 files, including `jira.md`/`confluence.md`), `sources/mcp-servers.json`, `.github/agents/*.agent.md` (personas + orchestrator + mode agents), `.github/agents/experts/*.agent.md` (9 Business Panel experts), `.github/copilot-instructions.md`, `tools/` (the Jira/Confluence scripts themselves — see `TOOLS-DESIGN.md`).
 - **Never hand-edit — generated, overwritten on every run:** `.github/skills/*/SKILL.md`, `.github/prompts/*.prompt.md`, `.copilot/mcp-config.json`, `.vscode/mcp.json`.
-- **Never hand-edit — deployed, overwritten on every `deploy:global` run:** anything under `~/.copilot/` or the IDEs' global MCP config paths. These are a *copy*, not a symlink — this repo can be moved/deleted after deploying without breaking what's already installed.
+- **Never hand-edit — deployed, overwritten on every `deploy:global` run:** anything under `~/.copilot/` or the IDEs' global MCP config paths. These are a *copy*, not a symlink — this repo can be moved/deleted after deploying without breaking what's already installed. `~/.copilot/tools/` is the one exception to "deployed on every run": it's opt-in (`--all` / `--tool=jira,confluence`), and `~/.copilot/tools/.env` specifically is never overwritten once created, since it holds real credentials.
 
 One authored command source (`sources/commands/<name>.md`, frontmatter + body) generates a matched `SKILL.md` + `.prompt.md` pair via `scripts/generate.js`. One `sources/mcp-servers.json` generates the CLI, VS Code, *and* JetBrains MCP configs (JetBrains reads the same `.vscode/mcp.json` VS Code does — no separate artifact).
 
@@ -53,6 +55,8 @@ Parses `---\n<frontmatter>\n---\n<body>` from each `sources/commands/*.md` file.
 Runs the generator, then copies output to `~/.copilot/skills/`, `~/.copilot/agents/*.agent.md` (agent files flattened from `.github/agents/` and `.github/agents/experts/`), `~/.copilot/copilot-instructions.md`, and `~/.copilot/mcp-config.json`. The Memory MCP server itself (`package.json` + `src/`, deliberately never `test/` or `node_modules/`) is deployed as a real independent **install** at `~/.copilot/mcp-servers/memory-mcp-server/` with its own `npm install` run there — not a path reference back into this repo. This is what makes the repo safely movable/deletable post-deploy.
 
 Also invokes `scripts/patch-vscode-settings.js`, which surgically inserts `chat.agentFilesLocations` into VS Code's `settings.json` via text insertion rather than `JSON.parse`/`stringify` (the file is JSONC — comments and trailing commas that a naive round-trip would destroy). Always backs up first; leaves the key alone and prints instructions if it already exists; validates the result parses as JSON before writing, discards the change otherwise.
+
+`scripts/deploy-global.js` also handles the opt-in Jira/Confluence tools (`--all` / `--tool=jira,confluence`), deployed to `~/.copilot/tools/` — a sibling to `skills/`/`agents/`/`mcp-servers/`, not inside any of them, per `TOOLS-DESIGN.md` §3. An unrecognized `--tool=` name is validated and rejected *before* any deploy step runs at all, so a typo can't cause a partial deploy. This is unlike the memory server: no `npm install` step, since `tools/` has zero dependencies by design.
 
 ### Memory MCP server (`memory-mcp-server/`)
 A local-only MCP server (`src/index.js` + `src/store.js`) implementing `write_memory`/`read_memory`/`list_memories`/`delete_memory` over a single JSON file. Two properties are load-bearing and enforced by tests, not just convention:
