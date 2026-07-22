@@ -1,0 +1,7 @@
+#!/bin/sh
+# Thin wrapper -- actual validation logic lives in commit-msg.js (this repo scripts
+# everything in Node, not shell, so the logic stays testable and consistent with
+# scripts/generate.js and scripts/deploy-global.js).
+#
+# Activate this hooks directory with: git config core.hooksPath .githooks
+exec node "$(dirname "$0")/commit-msg.js" "$1"

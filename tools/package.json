@@ -2,6 +2,7 @@
   "name": "copilot-superclaude-tools",
   "version": "0.1.0",
   "private": true,
-  "description": "Read-only Jira/Confluence script tools (TOOLS-DESIGN.md). No dependencies — Node 20+'s built-in fetch is enough. This file exists only to declare ESM (\"type\": \"module\") for jira/, confluence/, and lib/ — Node resolves it by walking up from each script, so one file here covers all three.",
+  "license": "MIT",
+  "description": "Read-only Jira/Confluence/GitLab script tools. No dependencies — Node 20+'s built-in fetch is enough. This file exists only to declare ESM (\"type\": \"module\") for jira/, confluence/, gitlab/, and lib/ — Node resolves it by walking up from each script, so one file here covers all four.",
   "type": "module"
 }

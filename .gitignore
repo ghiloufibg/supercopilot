@@ -8,6 +8,9 @@ node_modules/
 # tools/.env.example (placeholders only) stays committed, tools/.env (real values) never does
 tools/.env
 
+# Claude-authored docs (design notes, test checklists, etc.) — not version-controlled
+claudedocs/
+
 # OS/editor cruft
 .DS_Store
 Thumbs.db

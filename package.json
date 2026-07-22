@@ -2,8 +2,10 @@
   "name": "copilot-superclaude",
   "version": "0.1.0-phase1",
   "private": true,
-  "description": "SuperClaude-for-Copilot -- see DESIGN.md. Provisional name pending DESIGN.md §9.1.",
+  "license": "MIT",
+  "description": "A GitHub Copilot port of the SuperClaude framework: commands, personas, behavioral modes, and a Memory MCP server for Copilot CLI, VS Code, and JetBrains. Project name is provisional.",
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
     "generate": "node scripts/generate.js all",
     "generate:skills": "node scripts/generate.js skills",
     "generate:mcp-configs": "node scripts/generate.js mcp-configs",

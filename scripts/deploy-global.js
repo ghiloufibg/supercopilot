@@ -14,11 +14,16 @@ const ROOT = path.resolve(__dirname, '..');
 const HOME = os.homedir();
 const COPILOT_HOME = process.env.COPILOT_HOME || path.join(HOME, '.copilot');
 
-// TOOLS-DESIGN.md — Jira/Confluence read-only script tools, installed separately from the
-// plugin itself via --all or --tool=jira,confluence, opt-in (not part of the default deploy).
-const KNOWN_TOOLS = ['jira', 'confluence'];
-const TOOL_SCRIPT_FILENAMES = { jira: 'jira-fetch.js', confluence: 'confluence-fetch.js' };
-const TOOL_SKILL_PLACEHOLDERS = { jira: '{{JIRA_SCRIPT_PATH}}', confluence: '{{CONFLUENCE_SCRIPT_PATH}}' };
+// TOOLS-DESIGN.md — Jira/Confluence/GitLab read-only script tools, installed separately from
+// the plugin itself via --all or --tool=jira,confluence,gitlab, opt-in (not part of the
+// default deploy).
+const KNOWN_TOOLS = ['jira', 'confluence', 'gitlab'];
+const TOOL_SCRIPT_FILENAMES = { jira: 'jira-fetch.js', confluence: 'confluence-fetch.js', gitlab: 'gitlab-fetch.js' };
+const TOOL_SKILL_PLACEHOLDERS = {
+  jira: '{{JIRA_SCRIPT_PATH}}',
+  confluence: '{{CONFLUENCE_SCRIPT_PATH}}',
+  gitlab: '{{GITLAB_SCRIPT_PATH}}',
+};
 
 function copyFile(src, dest) {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -201,7 +206,7 @@ function deployTools(requestedTools) {
   // Sibling to skills/agents/mcp-servers, not inside any of them -- installed separately from
   // the plugin itself (TOOLS-DESIGN.md §3). Shared package.json declares ESM for every script
   // under destRoot; Node resolves it by walking up from each script's own directory, so this one
-  // file (no dependencies to install) covers jira/, confluence/, and lib/ alike.
+  // file (no dependencies to install) covers jira/, confluence/, gitlab/, and lib/ alike.
   copyFile(path.join(srcRoot, 'package.json'), path.join(destRoot, 'package.json'));
   copyDir(path.join(srcRoot, 'lib'), path.join(destRoot, 'lib'));
 

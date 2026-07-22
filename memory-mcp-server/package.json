@@ -2,7 +2,8 @@
   "name": "@copilot-superclaude/memory-mcp-server",
   "version": "0.1.0",
   "private": true,
-  "description": "Local-only MCP server implementing write_memory/read_memory/list_memories/delete_memory. Zero outbound network calls by design (DESIGN.md §5b, §6 Tier B) — see test/network-isolation.test.js.",
+  "license": "MIT",
+  "description": "Local-only MCP server implementing write_memory/read_memory/list_memories/delete_memory. Zero outbound network calls by design — see test/network-isolation.test.js.",
   "type": "module",
   "bin": {
     "memory-mcp-server": "./src/index.js"

@@ -66,8 +66,25 @@ export function authHeader(email, token) {
   return `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`;
 }
 
+// GitLab's PAT scheme (TOOLS-DESIGN.md §4) — a bare token sent as the PRIVATE-TOKEN header,
+// unrelated to Atlassian's Basic-auth email+token pair above. No encoding, just the raw value.
+export function getGitlabConfig() {
+  loadEnvFileIfPresent();
+  const baseUrl = process.env.GITLAB_BASE_URL;
+  const token = process.env.GITLAB_API_TOKEN;
+  const missing = [];
+  if (!baseUrl) missing.push('GITLAB_BASE_URL');
+  if (!token) missing.push('GITLAB_API_TOKEN');
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required environment variable(s): ${missing.join(', ')}. Set them in ${resolveEnvPath()}.`
+    );
+  }
+  return { baseUrl: baseUrl.replace(/\/+$/, ''), token };
+}
+
 // GET-only by construction — there is no POST/PUT/DELETE path anywhere in this module or its
-// two callers (TOOLS-DESIGN.md §6: read-only is structural, not a runtime permission check).
+// callers (TOOLS-DESIGN.md §6: read-only is structural, not a runtime permission check).
 export async function getJson(url, headers, fetchImpl = fetch) {
   let response;
   try {
@@ -83,6 +100,44 @@ export async function getJson(url, headers, fetchImpl = fetch) {
     );
   }
   return response.json();
+}
+
+// GitLab list endpoints paginate via response headers (X-Total, X-Total-Pages, ...), not the
+// JSON body Jira's `total` field lives in (TOOLS-DESIGN.md §6c) — a separate function so
+// getJson() above, and the Jira/Confluence callers relying on its exact shape, stay untouched.
+export async function getJsonWithMeta(url, headers, fetchImpl = fetch) {
+  let response;
+  try {
+    response = await fetchImpl(url, { method: 'GET', headers });
+  } catch (err) {
+    throw new Error(`Request to ${url} failed: ${err.message}`);
+  }
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => '');
+    throw new Error(
+      `${url} responded ${response.status} ${response.statusText}${bodyText ? ` — ${bodyText.slice(0, 300)}` : ''}`
+    );
+  }
+  const data = await response.json();
+  return { data, headers: response.headers };
+}
+
+// A handful of GitLab endpoints (raw file content, job trace logs) return plain text, not
+// JSON — no digest formatting needed since the body is already exactly what the caller wants.
+export async function getText(url, headers, fetchImpl = fetch) {
+  let response;
+  try {
+    response = await fetchImpl(url, { method: 'GET', headers });
+  } catch (err) {
+    throw new Error(`Request to ${url} failed: ${err.message}`);
+  }
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => '');
+    throw new Error(
+      `${url} responded ${response.status} ${response.statusText}${bodyText ? ` — ${bodyText.slice(0, 300)}` : ''}`
+    );
+  }
+  return response.text();
 }
 
 // Flattens a Jira Atlassian Document Format node tree (issue/comment `description`/`body` on
