@@ -2,7 +2,7 @@
 // Deploys this repo's authored content (the source of truth, version-controlled here) to the
 // global/personal locations each surface reads from, per DESIGN.md's global-setup analysis.
 // This repo stays the canonical source; run this script again after any change here to
-// re-sync. Nothing in ~/.copilot or the IDE user-data folders should be hand-edited directly —
+// re-sync. Nothing in ~/.copilot or the IDE user-data folders should be hand-edited directly --
 // edit .github/agents, .github/skills, sources/, etc. here and re-run this script instead.
 
 const fs = require('fs');
@@ -14,7 +14,7 @@ const ROOT = path.resolve(__dirname, '..');
 const HOME = os.homedir();
 const COPILOT_HOME = process.env.COPILOT_HOME || path.join(HOME, '.copilot');
 
-// TOOLS-DESIGN.md — Jira/Confluence/GitLab read-only script tools, installed separately from
+// TOOLS-DESIGN.md -- Jira/Confluence/GitLab read-only script tools, installed separately from
 // the plugin itself via --all or --tool=jira,confluence,gitlab, opt-in (not part of the
 // default deploy).
 const KNOWN_TOOLS = ['jira', 'confluence', 'gitlab'];
@@ -41,7 +41,7 @@ function copyDir(srcDir, destDir, excludeNames = []) {
   }
 }
 
-// TOOLS-DESIGN.md §7 — validated up front, before any deploy step runs at all. An unrecognized
+// TOOLS-DESIGN.md §7 -- validated up front, before any deploy step runs at all. An unrecognized
 // --tool= name is a hard failure: nothing gets deployed for the run, not even the core plugin,
 // rather than silently skipping the typo and partially succeeding.
 function parseRequestedTools(argv) {
@@ -67,23 +67,24 @@ function parseRequestedTools(argv) {
 function deploySkills() {
   const srcDir = path.join(ROOT, '.github', 'skills');
   const destDir = path.join(COPILOT_HOME, 'skills');
-  let count = 0;
+  const names = [];
   for (const name of fs.readdirSync(srcDir)) {
     const srcFile = path.join(srcDir, name, 'SKILL.md');
     if (!fs.existsSync(srcFile)) continue;
     copyFile(srcFile, path.join(destDir, name, 'SKILL.md'));
-    count++;
+    names.push(name);
   }
-  console.log(`skills      -> ${destDir}  (${count} skills, confirmed global location for CLI + VS Code; JetBrains preview)`);
+  console.log(`skills      -> ${destDir}  (${names.length} skills, confirmed global location for CLI + VS Code; JetBrains preview)`);
+  return names;
 }
 
 function deployAgents() {
   // Global agents are flat (no experts/ subdirectory) per the documented ~/.copilot/agents
-  // convention — flatten both the top-level agents and the experts/ subdirectory into one folder.
+  // convention -- flatten both the top-level agents and the experts/ subdirectory into one folder.
   const srcDir = path.join(ROOT, '.github', 'agents');
   const destDir = path.join(COPILOT_HOME, 'agents');
   fs.mkdirSync(destDir, { recursive: true });
-  let count = 0;
+  const names = [];
 
   function copyAgentFilesFrom(dir) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -91,19 +92,21 @@ function deployAgents() {
         copyAgentFilesFrom(path.join(dir, entry.name));
       } else if (entry.name.endsWith('.agent.md')) {
         copyFile(path.join(dir, entry.name), path.join(destDir, entry.name));
-        count++;
+        names.push(entry.name);
       }
     }
   }
   copyAgentFilesFrom(srcDir);
-  console.log(`agents      -> ${destDir}  (${count} agent files, flattened; confirmed global location for CLI, likely JetBrains via shared harness — unconfirmed)`);
+  console.log(`agents      -> ${destDir}  (${names.length} agent files, flattened; confirmed global location for CLI, likely JetBrains via shared harness -- unconfirmed)`);
+  return names;
 }
 
 function deployInstructions() {
   const src = path.join(ROOT, '.github', 'copilot-instructions.md');
   const dest = path.join(COPILOT_HOME, 'copilot-instructions.md');
   copyFile(src, dest);
-  console.log(`instructions -> ${dest}  (confirmed global location for CLI; VS Code/JetBrains global instructions are settings-based, not a drop-in file — verify by hand)`);
+  console.log(`instructions -> ${dest}  (confirmed global location for CLI; VS Code/JetBrains global instructions are settings-based, not a drop-in file -- verify by hand)`);
+  return dest;
 }
 
 function installMemoryServer() {
@@ -137,10 +140,69 @@ function installMemoryServer() {
   return destDir;
 }
 
-function deployMcpConfigs(globalMemoryServerDir) {
+// UNINSTALL-DESIGN.md §4 -- these three files are shared, mixed-ownership locations. Deploy used
+// to overwrite them wholesale; that silently destroyed any pre-existing or independently-added
+// server entries the moment this plugin was installed, which is exactly the thing the uninstall
+// design is trying to avoid on the way *out*. Fixed here too: merge our five known keys into
+// whatever's already there instead of replacing the whole object, and record a "_managedBy"
+// sibling key listing exactly which keys are ours -- self-contained ownership tracking that
+// survives even if the external manifest is lost (UNINSTALL-DESIGN.md §4's MCP-configs bullet).
+function deepEqual(a, b) {
+  if (a === b) return true;
+  if (typeof a !== typeof b || a === null || b === null || typeof a !== 'object') return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((k) => deepEqual(a[k], b[k]));
+}
+
+// isFirstDeploy: found and fixed during real-CLI testing -- without this check, a reserved key
+// (e.g. "context7") that a user already had configured with their OWN different command/args
+// BEFORE ever installing this plugin gets silently overwritten on first deploy, with nothing
+// recording what it used to be. Uninstall can't recover it afterward either: by the time uninstall
+// runs, the live value matches exactly what deploy wrote, so there's no drift to detect -- the
+// original is just gone. Mirrors patch-vscode-settings.js's own "always back up before touching
+// anything shared" rule: on a first deploy only, a reserved key that already holds different
+// content gets preserved under "_preSupercopilotBackup" before being overwritten, instead of
+// silently discarded. Not applied on subsequent deploys (manifest already present) -- that's just
+// this plugin refreshing its own previously-deployed config, not a collision with someone else's.
+function mergeManagedServers(configPath, serversKey, resolvedServers, isFirstDeploy) {
+  let existing = {};
+  if (fs.existsSync(configPath)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    } catch (err) {
+      console.warn(`  WARNING: ${configPath} exists but isn't valid JSON -- replacing it rather than merging (${err.message})`);
+      existing = {};
+    }
+  }
+  existing[serversKey] = existing[serversKey] || {};
+  const managedKeys = Object.keys(resolvedServers);
+  for (const key of managedKeys) {
+    const current = existing[serversKey][key];
+    if (isFirstDeploy && current !== undefined && !deepEqual(current, resolvedServers[key])) {
+      existing._preSupercopilotBackup = existing._preSupercopilotBackup || {};
+      existing._preSupercopilotBackup[key] = current;
+      console.warn(
+        `  WARNING: ${configPath} already had a differently-configured "${key}" server before this install -- ` +
+          `its original value was preserved under _preSupercopilotBackup.${key} rather than discarded. Restore it by hand if you need it back.`
+      );
+    }
+    existing[serversKey][key] = resolvedServers[key];
+  }
+  existing._managedBy = existing._managedBy || {};
+  existing._managedBy.supercopilot = managedKeys;
+
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify(existing, null, 2) + '\n');
+  return { path: configPath, serverKeys: managedKeys, entries: resolvedServers };
+}
+
+function deployMcpConfigs(globalMemoryServerDir, isFirstDeploy) {
   const { servers } = JSON.parse(fs.readFileSync(path.join(ROOT, 'sources', 'mcp-servers.json'), 'utf8'));
 
-  // Global configs need absolute paths, not ${workspaceFolder} — resolve every server's path,
+  // Global configs need absolute paths, not ${workspaceFolder} -- resolve every server's path,
   // then override "memory" specifically to point at the just-installed global copy instead of
   // wherever ${workspaceFolder} would have resolved to (this dev repo).
   const resolvedServers = {};
@@ -152,13 +214,14 @@ function deployMcpConfigs(globalMemoryServerDir) {
     resolvedServers.memory.args = [path.join(globalMemoryServerDir, 'src', 'index.js').replace(/\\/g, '/')];
   }
 
-  // Copilot CLI — confirmed global location.
-  const cliConfigPath = path.join(COPILOT_HOME, 'mcp-config.json');
-  fs.mkdirSync(path.dirname(cliConfigPath), { recursive: true });
-  fs.writeFileSync(cliConfigPath, JSON.stringify({ mcpServers: resolvedServers }, null, 2) + '\n');
-  console.log(`mcp (CLI)   -> ${cliConfigPath}  (confirmed)`);
+  const result = { cli: null, vscode: null, jetbrains: null };
 
-  // VS Code — global mcp.json lives in the VS Code user-data folder, which varies by platform
+  // Copilot CLI -- confirmed global location.
+  const cliConfigPath = path.join(COPILOT_HOME, 'mcp-config.json');
+  result.cli = mergeManagedServers(cliConfigPath, 'mcpServers', resolvedServers, isFirstDeploy);
+  console.log(`mcp (CLI)   -> ${cliConfigPath}  (confirmed; merged with any pre-existing entries)`);
+
+  // VS Code -- global mcp.json lives in the VS Code user-data folder, which varies by platform
   // and edition (Code vs Code - Insiders vs a portable install) and wasn't confirmed to exist
   // on this machine. Only write it if that folder is actually found; otherwise print what to do
   // by hand instead of guessing a path that might be wrong.
@@ -171,8 +234,8 @@ function deployMcpConfigs(globalMemoryServerDir) {
   const foundVsCodeDir = vsCodeUserDirs.find((d) => fs.existsSync(d));
   if (foundVsCodeDir) {
     const vsCodeConfigPath = path.join(foundVsCodeDir, 'mcp.json');
-    fs.writeFileSync(vsCodeConfigPath, JSON.stringify({ servers: resolvedServers }, null, 2) + '\n');
-    console.log(`mcp (VS Code) -> ${vsCodeConfigPath}  (found and written)`);
+    result.vscode = mergeManagedServers(vsCodeConfigPath, 'servers', resolvedServers, isFirstDeploy);
+    console.log(`mcp (VS Code) -> ${vsCodeConfigPath}  (found and written; merged with any pre-existing entries)`);
   } else {
     console.log(
       `mcp (VS Code) -> NOT WRITTEN. No VS Code user-data folder found on this machine (checked: ${vsCodeUserDirs.join(', ')}). ` +
@@ -181,24 +244,51 @@ function deployMcpConfigs(globalMemoryServerDir) {
     );
   }
 
-  // JetBrains — global path is documented as ~/.config/github-copilot/intellij/mcp.json,
+  // JetBrains -- global path is documented as ~/.config/github-copilot/intellij/mcp.json,
   // consistent across platforms in what's documented (not OS-conditional the way VS Code's is).
   const jetbrainsConfigPath = path.join(HOME, '.config', 'github-copilot', 'intellij', 'mcp.json');
-  fs.mkdirSync(path.dirname(jetbrainsConfigPath), { recursive: true });
-  fs.writeFileSync(jetbrainsConfigPath, JSON.stringify({ servers: resolvedServers }, null, 2) + '\n');
-  console.log(`mcp (JetBrains) -> ${jetbrainsConfigPath}  (written per documentation; not yet hands-on confirmed in a real IDE, see TESTING.md)`);
+  result.jetbrains = mergeManagedServers(jetbrainsConfigPath, 'servers', resolvedServers, isFirstDeploy);
+  console.log(`mcp (JetBrains) -> ${jetbrainsConfigPath}  (written per documentation; merged with any pre-existing entries; not yet hands-on confirmed in a real IDE, see TESTING.md)`);
+
+  return result;
 }
 
 function patchVsCodeAgentLocations() {
   const agentsPath = path.join(COPILOT_HOME, 'agents').replace(/\\/g, '/');
   console.log('');
   execFileSync('node', [path.join(__dirname, 'patch-vscode-settings.js'), agentsPath], { stdio: 'inherit' });
+  return agentsPath;
+}
+
+// UNINSTALL-DESIGN.md §3 -- rather than changing the IPC contract with patch-vscode-settings.js
+// (a standalone script, invoked as a subprocess), just re-read whatever it left behind. This
+// independently confirms what actually happened (markers present, key present, or neither) using
+// the same detection either uninstall or a future re-deploy would use anyway.
+function detectVsCodeSettingsPatch(agentsPath) {
+  const vsCodeUserDirs = [
+    path.join(HOME, 'AppData', 'Roaming', 'Code', 'User'),
+    path.join(HOME, 'AppData', 'Roaming', 'Code - Insiders', 'User'),
+    path.join(HOME, '.config', 'Code', 'User'),
+    path.join(HOME, 'Library', 'Application Support', 'Code', 'User'),
+  ];
+  const foundVsCodeDir = vsCodeUserDirs.find((d) => fs.existsSync(d));
+  if (!foundVsCodeDir) return null;
+  const settingsPath = path.join(foundVsCodeDir, 'settings.json');
+  if (!fs.existsSync(settingsPath)) return null;
+  const content = fs.readFileSync(settingsPath, 'utf8');
+  if (!content.includes('"chat.agentFilesLocations"')) return null;
+  return {
+    path: settingsPath,
+    key: 'chat.agentFilesLocations',
+    value: { [agentsPath]: true },
+    hasMarkers: content.includes('supercopilot managed'),
+  };
 }
 
 function deployTools(requestedTools) {
   // Opt-in only -- no flags means no tools installed, unchanged from before this existed
   // (TOOLS-DESIGN.md §7).
-  if (requestedTools.size === 0) return;
+  if (requestedTools.size === 0) return { deployed: [], envCreatedByUs: false };
 
   const srcRoot = path.join(ROOT, 'tools');
   const destRoot = path.join(COPILOT_HOME, 'tools');
@@ -213,8 +303,10 @@ function deployTools(requestedTools) {
   // Created from the template only if missing -- an existing .env (real credentials) is never
   // overwritten by a re-install (TOOLS-DESIGN.md §4/§7).
   const envDest = path.join(destRoot, '.env');
+  let envCreatedByUs = false;
   if (!fs.existsSync(envDest)) {
     copyFile(path.join(srcRoot, '.env.example'), envDest);
+    envCreatedByUs = true;
     console.log(`tools .env  -> ${envDest}  (created from template -- fill in real credentials before use)`);
   } else {
     console.log(`tools .env  -> ${envDest}  (already exists, left untouched)`);
@@ -240,15 +332,56 @@ function deployTools(requestedTools) {
       );
     }
   }
+
+  return { deployed: [...requestedTools], envCreatedByUs };
+}
+
+// UNINSTALL-DESIGN.md §7 -- the prerequisite for uninstall's primary (safest) removal path.
+// Written last, after everything else has actually happened, so it reflects ground truth rather
+// than intent. Deleted again by uninstall-global.js on a successful run (§8: "its only purpose is
+// enabling uninstall").
+function writeManifest(data) {
+  const manifestPath = path.join(COPILOT_HOME, '.supercopilot-manifest.json');
+  const pkgVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+  const manifest = {
+    version: pkgVersion,
+    deployedAt: new Date().toISOString(),
+    skills: data.skills,
+    agents: data.agents,
+    instructionsFile: data.instructionsFile,
+    memoryServerDir: data.memoryServerDir,
+    mcpConfigs: data.mcpConfigs,
+    vscodeSettingsPatched: data.vscodeSettingsPatched,
+    toolsDeployed: data.toolsResult.deployed,
+    toolsEnvCreatedByUs: data.toolsResult.envCreatedByUs,
+  };
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+  console.log(`manifest    -> ${manifestPath}`);
 }
 
 // Validated first, before any deploy step -- an invalid --tool= value aborts the entire run.
 const requestedTools = parseRequestedTools(process.argv.slice(2));
 
-deploySkills();
-deployAgents();
-deployInstructions();
+// Checked before anything runs, since deploySkills() etc. don't touch this file -- only
+// writeManifest() does, at the very end. "First deploy" means no manifest yet, i.e. this plugin
+// has never successfully deployed here before (fresh install, or a clean reinstall after uninstall).
+const isFirstDeploy = !fs.existsSync(path.join(COPILOT_HOME, '.supercopilot-manifest.json'));
+
+const skills = deploySkills();
+const agents = deployAgents();
+const instructionsFile = deployInstructions();
 const globalMemoryServerDir = installMemoryServer();
-deployMcpConfigs(globalMemoryServerDir);
-patchVsCodeAgentLocations();
-deployTools(requestedTools);
+const mcpConfigs = deployMcpConfigs(globalMemoryServerDir, isFirstDeploy);
+const agentsPathForSettings = patchVsCodeAgentLocations();
+const vscodeSettingsPatched = detectVsCodeSettingsPatch(agentsPathForSettings);
+const toolsResult = deployTools(requestedTools);
+
+writeManifest({
+  skills,
+  agents,
+  instructionsFile,
+  memoryServerDir: globalMemoryServerDir,
+  mcpConfigs,
+  vscodeSettingsPatched,
+  toolsResult,
+});

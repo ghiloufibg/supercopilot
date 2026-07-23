@@ -11,6 +11,11 @@ tools/.env
 # Claude-authored docs (design notes, test checklists, etc.) — not version-controlled
 claudedocs/
 
+# Root-level Docker verification harness (deploy/uninstall round-trip testing) — local-only,
+# not version-controlled. Anchored to repo root so it doesn't affect memory-mcp-server/test/,
+# which is a real, committed test suite.
+/test/
+
 # OS/editor cruft
 .DS_Store
 Thumbs.db

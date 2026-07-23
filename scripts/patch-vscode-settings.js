@@ -127,7 +127,12 @@ function patch(agentsPath) {
   const alreadyEndsWithComma = contentBeforeWs.endsWith(',');
   const needsComma = hasExistingProperties && !alreadyEndsWithComma;
 
-  const newProperty = `${needsComma ? ',' : ''}\n  ${KEY}: {\n    "${agentsPath}": true\n  }`;
+  // Wrapped in delimiter comments (same idiom conda's shell-rc init block uses:
+  // "# >>> conda initialize >>>" / "# <<< conda initialize <<<") -- self-contained ownership
+  // marking that survives even if the external manifest (UNINSTALL-DESIGN.md §3) is lost, and
+  // valid here specifically because settings.json is JSONC, which is the same reason this script
+  // avoids parse-mutate-stringify in the first place.
+  const newProperty = `${needsComma ? ',' : ''}\n  // >>> supercopilot managed >>>\n  ${KEY}: {\n    "${agentsPath}": true\n  }\n  // <<< supercopilot managed <<<`;
   // Guarantee a newline before the closing brace even if the original had none (e.g. a bare "{}").
   const separator = trailingWs.includes('\n') ? trailingWs : `\n${trailingWs}`;
   const patched = contentBeforeWs + newProperty + separator + original.slice(insertionPoint);
