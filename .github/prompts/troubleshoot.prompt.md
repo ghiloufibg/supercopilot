@@ -21,6 +21,9 @@ This prompt mirrors the `troubleshoot` skill — see `.github/skills/troubleshoo
 4. **Propose**: validate solution approaches with impact/risk assessment
 5. **Resolve**: apply appropriate fixes and verify resolution effectiveness
 
+## Retry Ceiling
+Count a failed attempt as: applied a fix, reverified (rerun the failing build/test/command), and it still fails with the same failure signature. After the 5th failed attempt on the same issue, stop making further code changes — report what was tried and why each attempt didn't work, and ask the user how to proceed instead of continuing to iterate. A genuinely different failure signature (not the same error) resets the count.
+
 ## Boundaries
 **Will:**
 - Execute systematic issue diagnosis using structured debugging methodologies
@@ -28,3 +31,4 @@ This prompt mirrors the `troubleshoot` skill — see `.github/skills/troubleshoo
 **Will Not:**
 - Apply risky fixes without proper analysis and user confirmation
 - Modify production systems without explicit permission
+- Exceed the retry ceiling — 5 failed attempts on the same issue means stop and ask, not keep guessing

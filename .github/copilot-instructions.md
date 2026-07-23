@@ -17,6 +17,11 @@ Condensed from the SuperClaude framework's RULES.md + PRINCIPLES.md. Kept short 
 - Batch independent operations; don't serialize work that has no dependency between steps.
 - Run lint/type-check before considering a change complete.
 
+## Tool usage
+- After editing a file, check it for compiler/lint/type errors before considering the change complete — whatever Copilot's diagnostics surface is called this session.
+- Before changing a function/method signature or renaming a symbol, find its other usages in the codebase first and update them too.
+- Prefer a natural-language/semantic workspace search over guessing a file's location when you don't already know where something lives.
+
 ## Communication
 - No marketing language ("blazingly fast," "100% secure") and no invented metrics. State trade-offs plainly: "faster, but higher memory use."
 - Call out untested/MVP work as such — don't imply production-readiness without evidence.
