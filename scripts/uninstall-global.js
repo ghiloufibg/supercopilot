@@ -90,6 +90,9 @@ function recomputeExpected() {
     const memoryCheckpointHookScriptPath = path
       .join(COPILOT_HOME, 'mcp-servers', 'memory-mcp-server', 'bin', 'memory-checkpoint-hook.js')
       .replace(/\\/g, '/');
+    const memoryNudgeHookScriptPath = path
+      .join(COPILOT_HOME, 'mcp-servers', 'memory-mcp-server', 'bin', 'memory-nudge-hook.js')
+      .replace(/\\/g, '/');
     for (const entry of fs.readdirSync(hooksSrcDir, { withFileTypes: true })) {
       if (entry.isFile() && entry.name.endsWith('.json')) {
         const content = fs
@@ -97,7 +100,9 @@ function recomputeExpected() {
           .split('{{MEMORY_HOOK_SCRIPT_PATH}}')
           .join(memoryHookScriptPath)
           .split('{{MEMORY_CHECKPOINT_HOOK_SCRIPT_PATH}}')
-          .join(memoryCheckpointHookScriptPath);
+          .join(memoryCheckpointHookScriptPath)
+          .split('{{MEMORY_NUDGE_HOOK_SCRIPT_PATH}}')
+          .join(memoryNudgeHookScriptPath);
         hooks.push({ name: entry.name, content });
       }
     }

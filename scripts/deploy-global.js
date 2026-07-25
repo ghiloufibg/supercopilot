@@ -161,6 +161,7 @@ function deployHooks(globalMemoryServerDir) {
   }
   const memoryHookScriptPath = path.join(globalMemoryServerDir, 'bin', 'memory-hook.js').replace(/\\/g, '/');
   const memoryCheckpointHookScriptPath = path.join(globalMemoryServerDir, 'bin', 'memory-checkpoint-hook.js').replace(/\\/g, '/');
+  const memoryNudgeHookScriptPath = path.join(globalMemoryServerDir, 'bin', 'memory-nudge-hook.js').replace(/\\/g, '/');
   for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
     const content = fs
@@ -168,7 +169,9 @@ function deployHooks(globalMemoryServerDir) {
       .split('{{MEMORY_HOOK_SCRIPT_PATH}}')
       .join(memoryHookScriptPath)
       .split('{{MEMORY_CHECKPOINT_HOOK_SCRIPT_PATH}}')
-      .join(memoryCheckpointHookScriptPath);
+      .join(memoryCheckpointHookScriptPath)
+      .split('{{MEMORY_NUDGE_HOOK_SCRIPT_PATH}}')
+      .join(memoryNudgeHookScriptPath);
     fs.mkdirSync(destDir, { recursive: true });
     fs.writeFileSync(path.join(destDir, entry.name), content);
     names.push(entry.name);

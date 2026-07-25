@@ -44,6 +44,10 @@ const GLOBAL_OVERFLOW_LOG = path.join(ARCHIVE_DIR, 'global-overflow.jsonl');
 const SESSIONS_DIR = path.join(STORE_DIR, 'sessions');
 const LAST_WRITE_MARKER = path.join(STORE_DIR, '.last-write-at');
 const SESSION_MARKER_STALE_MS = 24 * 60 * 60 * 1000;
+const NUDGED_DIR = path.join(STORE_DIR, '.nudged');
+const NUDGE_STALE_MS = 24 * 60 * 60 * 1000;
+const NUDGE_DURATION_TRIGGER_MS = 10 * 60 * 1000;
+const NUDGE_MIN_TURNS = 3;
 
 const DEFAULT_PROJECT_PURGE_DAYS = 90;
 const DEFAULT_GLOBAL_CAP = 50;
@@ -499,4 +503,62 @@ export async function writeCheckpoint({ sessionId, cwd, reason }) {
     return writeMemory(`checkpoint/${project}/${timestamp}`, value, { scope: 'project', project });
   }
   return writeMemory(`checkpoint/unknown/${timestamp}`, value, { scope: 'global' });
+}
+
+// ---- agentStop nudge (DESIGN.md §11d, sub-phase 3b-4) ----
+//
+// Highest-risk piece of the pipeline (§11i) -- shipped last, and never without its own
+// off-switch (write_memory("config/nudge", "off")) already in place. Deliberately fails toward
+// *not* nudging whenever a decision can't be made safely: no session id means no way to dedupe a
+// repeat nudge, so it fails closed here -- the opposite direction from writeCheckpoint() above,
+// which fails toward an extra (harmless) checkpoint when uncertain. The asymmetry is intentional:
+// a missed checkpoint can lose data, but a missed nudge just means the model wasn't reminded --
+// low cost -- while an undedupable *repeated* nudge risks tripping the CLI's 8-consecutive-block
+// runaway guard or simply annoying the user every turn.
+
+async function pruneStaleNudgeSentinels() {
+  if (!existsSync(NUDGED_DIR)) return;
+  const cutoff = Date.now() - NUDGE_STALE_MS;
+  for (const file of await readdir(NUDGED_DIR)) {
+    const p = path.join(NUDGED_DIR, file);
+    const s = await stat(p).catch(() => null);
+    if (!s || s.mtimeMs < cutoff) await rm(p, { force: true });
+  }
+}
+
+// Takes transcript-derived signals as plain booleans/numbers rather than reading the transcript
+// itself -- transcript parsing is genuinely format-uncertain (DESIGN.md §11h) and stays the hook
+// script's concern (bin/memory-nudge-hook.js), not storage's.
+export async function shouldNudge({ sessionId, hadSideEffectTool, turnCount, alreadyBlocked }) {
+  if (alreadyBlocked) return false; // never block twice in a row, regardless of anything else
+
+  const globalData = await readGlobalShard();
+  if (globalData.entries['config/nudge']?.value === 'off') return false; // explicit escape hatch
+
+  if (!sessionId) return false; // can't dedupe -- fail toward silence, not a repeat-block risk
+
+  await pruneStaleNudgeSentinels();
+  await mkdir(NUDGED_DIR, { recursive: true });
+  const sentinelPath = path.join(NUDGED_DIR, `${sanitizeSessionId(sessionId)}.json`);
+  if (existsSync(sentinelPath)) return false; // already nudged this session
+
+  let durationTrigger = false;
+  const marker = await readJSON(sessionMarkerPath(sessionId), null);
+  if (marker?.startedAt) {
+    durationTrigger = Date.now() - Date.parse(marker.startedAt) > NUDGE_DURATION_TRIGGER_MS;
+  }
+
+  const shouldFire = Boolean(hadSideEffectTool) || (turnCount || 0) >= NUDGE_MIN_TURNS || durationTrigger;
+  if (!shouldFire) return false;
+
+  // Sentinel creation is the last step of deciding to fire -- exclusive create makes this
+  // idempotent even under a stray double-invocation of this same hook.
+  try {
+    const handle = await open(sentinelPath, 'wx');
+    await handle.close();
+  } catch (err) {
+    if (err.code === 'EEXIST') return false; // lost a race with another invocation -- already nudged
+    throw err;
+  }
+  return true;
 }
