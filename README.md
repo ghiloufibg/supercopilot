@@ -6,7 +6,7 @@ A GitHub Copilot port of the SuperClaude framework, targeting Copilot CLI, VS Co
 
 **Getting started:** see [Prerequisites](#prerequisites) and [Global Deployment](#global-deployment) below for installation and usage.
 
-**Status:** Phases 0–3 are implemented and unit-tested, and the plugin deploys globally to `~/.copilot/`. It has not yet been exercised end-to-end in a live Copilot session — see [Verification status](#verification-status) below.
+**Status:** Phases 0–3 are implemented and unit-tested, and the plugin deploys globally to `~/.copilot/`. Memory now auto-loads and auto-saves via Copilot CLI hooks (see [Memory Automation](#memory-automation) below) — also implemented and unit-tested, also not yet exercised end-to-end in a live Copilot session. See [Verification status](#verification-status) below.
 
 **License:** [MIT](./LICENSE). No publishing or distribution tooling is set up; the deployed output is intended to be copied to a global Copilot configuration directory rather than installed as a package.
 
@@ -16,6 +16,7 @@ A GitHub Copilot port of the SuperClaude framework, targeting Copilot CLI, VS Co
 
 - **Node.js 18+** — runs the generator, the Memory MCP server, and the `npx`-invoked MCP servers below.
 - **`npm install` inside `memory-mcp-server/`** — a manual one-time step, not automatic. Without it, the `memory` server won't start.
+- **`git` on PATH** (optional but recommended) — the memory hooks use `git remote get-url origin` to identify which repo a project-scoped memory belongs to. Falls back to the folder name if `git` isn't found or the folder isn't a repo, so it's not a hard requirement, just lower fidelity without it.
 - **Internet access on first run** for `context7`, `sequential-thinking`, `playwright`, and `chrome-devtools` — each is configured as `npx -y <package>`, which fetches it from the npm registry the first time it launches, then caches it.
 - **A local Chrome/Chromium install** for `chrome-devtools-mcp` to drive. Playwright may need its own separate `npx playwright install` step for browser binaries — not yet confirmed whether `@playwright/mcp` handles that automatically.
 - **GitHub Copilot itself**, with agent mode available in whichever surface (CLI/VS Code/JetBrains) you're using.
@@ -55,8 +56,9 @@ Every command below is invoked as `/name` in Copilot Chat (CLI/VS Code/JetBrains
 - `spec-panel` — 10 specification/software-engineering experts (Wiegers, Adzic, Cockburn, Fowler, Nygard, Newman, Hohpe, Crispin, Gregory, Hightower) reviewing a spec
 
 **Session & memory** (need the Memory MCP server registered)
-- `save` / `load` — persist and restore project context across sessions
+- `save` / `load` — persist and restore project context across sessions manually
 - `reflect` — check task adherence and completion against the stated goal
+- Memory now also loads and saves **automatically**, without either command — see [Memory Automation](#memory-automation) below
 
 **Research** (needs a web-search MCP server registered separately — not on by default)
 - `research` — adaptive multi-hop web research with cited, confidence-scored output
@@ -95,11 +97,12 @@ scripts/patch-vscode-settings.js  # surgically adds chat.agentFilesLocations to 
 .github/agents/experts/*.agent.md # 9 Business Panel expert subagents, user-invocable: false
 .github/skills/*/SKILL.md         # 32 skills (29 generated commands, incl. jira/confluence/gitlab, + bulk-refactor + ui-components + deep-research)
 .github/prompts/*.prompt.md       # generated locally only — no global equivalent exists
-.github/hooks/post-implementation.json  # Copilot agent hook: pm-agent capture reminder — UNVERIFIED schema, see below
+.github/hooks/post-implementation.json  # Copilot agent hook: pm-agent capture reminder — schema fixed, not yet hands-on run, see below
+.github/hooks/session-memory.json # Copilot agent hooks: sessionStart/agentStop/sessionEnd memory automation, see "Memory Automation" below
 .githooks/commit-msg(.js)         # git client-side hook: blocks AI-attribution mentions and long commit bodies — see "Git hooks" below
 .copilot/mcp-config.json          # generated locally (repo-relative, for testing this repo standalone)
 .vscode/mcp.json                   # generated locally, same reason
-memory-mcp-server/                # Tier B: the Memory MCP server, real Node code + tests
+memory-mcp-server/                # Tier B: the Memory MCP server (src/) + its hook scripts (bin/) + tests
 tools/                            # read-only Jira/Confluence/GitLab script tools — NOT deployed by default
 ```
 
@@ -118,12 +121,13 @@ Copies/generates this repo's content to the actual locations Copilot reads from 
 | 32 skills | `~/.copilot/skills/<name>/SKILL.md` | CLI, VS Code (JetBrains: preview) |
 | 31 agent files (flattened) | `~/.copilot/agents/*.agent.md` | CLI (JetBrains: likely, unconfirmed) |
 | `copilot-instructions.md` | `~/.copilot/copilot-instructions.md` | CLI only — VS Code/JetBrains global instructions are settings-based, not a drop-in file |
-| **Memory MCP server itself** (`package.json` + `src/`, never `test/` or `node_modules/`) | `~/.copilot/mcp-servers/memory-mcp-server/` — a real **install**, not a reference back into this repo | `npm install` is run there directly; confirmed working, including on Windows (`execFileSync` needs `shell: true` for `npm` — found and fixed during testing) |
+| **Memory MCP server itself** (`package.json` + `src/` + `bin/`, never `test/` or `node_modules/`) | `~/.copilot/mcp-servers/memory-mcp-server/` — a real **install**, not a reference back into this repo | `npm install` is run there directly; confirmed working, including on Windows (`execFileSync` needs `shell: true` for `npm` — found and fixed during testing) |
 | MCP servers (5, `memory` pointing at the installed copy above, not this repo) | `~/.copilot/mcp-config.json` | CLI — confirmed |
 | Same MCP servers | VS Code's user-profile `mcp.json`, if found on the machine | Written only if VS Code's user-data folder is actually detected — otherwise the script prints the exact JSON to paste in via "MCP: Add Server" → Global |
 | Same MCP servers | `~/.config/github-copilot/intellij/mcp.json` | Written per documentation, not yet hands-on confirmed |
+| Hooks (`.github/hooks/*.json`, script paths resolved to the installed memory server above) | `~/.copilot/hooks/*.json` | User-level location per GitHub's hooks docs — applies across every repo, not just this one. Not yet hands-on run against a real Copilot hooks runtime. |
 
-**Memory storage is shared globally, by design** — `~/.copilot/memory-data/memory.json`, not scoped per-project. Verified live: wrote a key from one directory, read it back from a completely different one, got the same value.
+**Memory storage is shared globally by design, and sharded by project since the memory-automation work**: `~/.copilot/memory-data/global.json` (loads into every session everywhere) plus `~/.copilot/memory-data/projects/<id>.json` — one file per repo, keyed off a hashed `git remote get-url origin` so it survives re-clones. A pre-existing flat `memory.json` from before sharding existed is migrated into `global.json` automatically the first time it's touched, renamed to `memory.json.migrated` rather than deleted. Verified live (pre-sharding): wrote a key from one directory, read it back from a completely different one, got the same value; sharding/locking is unit-tested (see [Memory Automation](#memory-automation)) but not yet re-confirmed live.
 
 **This repo can now be moved, renamed, or deleted without breaking anything already deployed** — the installed memory server at `~/.copilot/mcp-servers/memory-mcp-server/` is a real, independent copy with its own `node_modules`, not a path back into this repo. Re-running `deploy:global` re-syncs it from whatever this repo currently contains.
 
@@ -152,17 +156,43 @@ A `commit-msg` hook lives in `.githooks/` (tracked, not `.git/hooks/` which neve
 ```
 cd memory-mcp-server
 npm install
-npm test          # 8 tests: 5 functional (write/read/list/delete/concurrency) + 3 network-isolation
+npm test          # 34 tests across 8 files: CRUD + concurrency, sharding/lifecycle, legacy migration,
+                   # sessionStart/agentStop/sessionEnd hook behavior, network-isolation
 npm start          # runs the server directly over stdio, for manual smoke-testing
 ```
+
+Four MCP tools, unchanged since Phase 3: `write_memory`, `read_memory`, `list_memories`, `delete_memory`. Each now accepts an optional `scope: "global" | "project"` argument (defaults to `"global"`, so nothing that already called these tools needs to change) — `"project"` scopes the entry to the current repo only, inferred automatically from `git remote get-url origin`, never something the caller has to name.
+
+## Memory Automation
+
+Three Copilot CLI hooks (`.github/hooks/session-memory.json`), all thin wrappers around `memory-mcp-server`'s own functions — no MCP round-trip, no LLM calls inside the hook scripts themselves:
+
+| Hook event | Script | Does |
+|---|---|---|
+| `sessionStart` | `bin/memory-hook.js` | Injects a digest of relevant memories as context, so `/load` is never required. Merges global entries with the current repo's project-scoped entries, capped to ~20 entries / ~2K tokens. Silently emits nothing if there's nothing relevant, rather than sending boilerplate every session. |
+| `agentStop` | `bin/memory-nudge-hook.js` | Nudges the model to call `write_memory` itself, at most once per session, when the turn looks worth remembering (a file-editing tool call, 3+ turns, or a 10-minute-plus session). Guarded against ever blocking twice in a row by both the CLI's own `stop_hook_active` flag and a one-shot sentinel file. |
+| `sessionEnd` | `bin/memory-checkpoint-hook.js` | Fallback only: if nothing was saved this session, writes one low-fidelity `checkpoint/<project>/<timestamp>` entry (session id, repo, termination reason — `sessionEnd` has no transcript access, so no conversation content) so nothing is silently lost. |
+
+**Turning it off**: `write_memory("config/nudge", "off")` disables the `agentStop` nudge specifically, without touching auto-load or the checkpoint fallback.
+
+**Lifecycle** (runs opportunistically inside `sessionStart`'s load, no separate cron/schedule): project shards untouched for 90 days are deleted outright, not archived — overridable via `write_memory("config/project-purge-days", "<n>")`. Global entries are capped at 50, oldest-by-least-recently-read evicted to `~/.copilot/memory-data/archive/global-overflow.jsonl` rather than deleted — overridable via `write_memory("config/global-cap", "<n>")`.
+
+**Concurrency**: an advisory file lock (`<file>.lock`, exclusive create + staleness detection) plus atomic tmp-then-rename writes, applied inside `store.js` itself so it covers both separate MCP server processes and the hook scripts — not just concurrent calls within one process. Stress-tested with real separate `node` processes hammering the same key concurrently (`test/concurrency.test.js`).
+
+**Real, known gaps, not glossed over**:
+- Nothing here has run inside an actual Copilot CLI session — every hook has been tested by piping a hand-built JSON payload into the script directly, not by the real Copilot runtime.
+- The transcript format `agentStop` hands the nudge hook is unconfirmed; parsing is a best-effort text scan that degrades to "found nothing" rather than throwing, and the session-duration trigger works independently of it either way.
+- JetBrains support for `sessionStart`/`agentStop`/`sessionEnd`'s `additionalContext`/`decision:block` mechanics specifically is unconfirmed (existing docs only confirm this level of detail is missing for `preToolUse`).
+- Whether this collides with GitHub's own native Copilot Memory feature (`/memory on|off|show`) for context budget is unconfirmed — this pipeline's own digest is capped and skips itself when empty specifically to reduce that risk, not eliminate it.
 
 ## Verification status
 
 ### Automated
 - Generator produces structurally correct output for all 29 commands, checked against the documented CLI (`mcpServers`)/VS Code (`servers`) formats.
 - Magic/Morphllm/Tavily confirmed absent everywhere, not just unused.
-- Memory MCP server: all 8 tests pass, including a concurrent-write race the tests caught and required a real fix for (see `memory-mcp-server/src/store.js`'s mutation queue).
+- Memory MCP server: all 34 tests pass, including a real cross-process concurrent-write race exercised with separate `node` processes (not just concurrent promises in one process) and required a real file-locking fix, not just the original in-process queue (see `memory-mcp-server/src/store.js`).
 - Memory MCP server responds correctly to a real MCP `initialize` handshake and lists all 4 tools correctly via `tools/list` (manually smoke-tested, not just unit-tested in isolation).
+- Memory automation hooks (`sessionStart`/`agentStop`/`sessionEnd`): unit-tested end-to-end by spawning each hook script as a real subprocess with a hand-built JSON payload on stdin and asserting its stdout — auto-load digest content and capping, once-per-session nudge dedup via both `stop_hook_active` and the sentinel file, the `config/nudge` off-switch, the duration trigger working independently of transcript parsing, and the checkpoint fallback firing only when nothing else was saved.
 - Jira/Confluence/GitLab scripts: 16 GitLab unit tests plus the pre-existing Jira/Confluence tests all pass (`node --test tools/*/test/*.test.js`), covering URL construction, auth header shape (Basic email:token vs. GitLab's bare `PRIVATE-TOKEN`), missing-credential errors, non-2xx errors not leaking the token/PAT, and digest formatting.
 
 ### Real-instance smoke test (Jira/Confluence/GitLab, against public open-source projects)
@@ -183,5 +213,5 @@ Both still need a hands-on check — documentation research is high-confidence, 
 ### Not yet verified
 - **Nothing has been loaded into a real Copilot CLI, VS Code, or JetBrains session.** All 29 commands, 17 personas, and the Memory MCP server need to be installed into an actual test repo and exercised in all three surfaces.
 - **Jira/Confluence/GitLab scripts against a real *Cloud*/authenticated instance are still unverified** — see the real-instance smoke test above for what has been checked (public data, anonymous where possible). What's left: a real Atlassian Cloud PAT and a real GitLab PAT against private/authenticated-only endpoints.
-- **`.github/hooks/post-implementation.json`'s exact schema is unverified** against a real Copilot hooks runtime — written against documented event names (`agentStop`) but not hands-on tested.
+- **Both `.github/hooks/*.json` files now use the real, documented hook schema** (`type: "command"` with `bash`/`powershell`, not the invalid `action`/`message` shape `post-implementation.json` originally shipped with) but **neither has actually been run by a real Copilot hooks runtime yet** — the memory automation hooks are unit-tested by direct subprocess invocation only, not by Copilot CLI itself calling them.
 - **Business Panel's real subagent delegation** (orchestrator → 9 experts) needs an actual run in each surface to confirm genuine delegation, not just file structure correctness.
