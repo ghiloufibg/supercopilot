@@ -64,6 +64,17 @@ test('a read issued right after a write for the same key sees the write, even if
   assert.equal(readResult.value, 'written first');
 });
 
+test('list_memories_with_values returns entries with values, most recently updated first', async () => {
+  const { writeMemory, listMemoriesWithValues } = await import('../src/store.js');
+  await writeMemory('order/a', 'first');
+  await writeMemory('order/b', 'second');
+  const entries = await listMemoriesWithValues();
+  const aIndex = entries.findIndex((e) => e.key === 'order/a');
+  const bIndex = entries.findIndex((e) => e.key === 'order/b');
+  assert.ok(bIndex < aIndex, 'more recently written key should sort first');
+  assert.equal(entries.find((e) => e.key === 'order/b').value, 'second');
+});
+
 test('concurrent writes to different keys do not clobber each other', async () => {
   const { writeMemory, readMemory } = await import('../src/store.js');
   await Promise.all(

@@ -84,6 +84,18 @@ export async function listMemories() {
   });
 }
 
+// Internal helper, not an MCP tool (DESIGN.md §11d: the hook CLI calls store.js functions
+// directly, no MCP round-trip). Used by bin/memory-hook.js to build the sessionStart digest --
+// needs values, not just keys, and needs them ordered so the digest can cap to the most recent N.
+export async function listMemoriesWithValues() {
+  return serialized(async () => {
+    const data = await loadAll();
+    return Object.entries(data)
+      .map(([key, entry]) => ({ key, value: entry.value, updatedAt: entry.updatedAt }))
+      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
+  });
+}
+
 export async function deleteMemory(key) {
   return serialized(async () => {
     const data = await loadAll();

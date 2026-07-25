@@ -78,6 +78,26 @@ function recomputeExpected() {
   const instructionsSrc = path.join(ROOT, '.github', 'copilot-instructions.md');
   const instructionsContent = fs.existsSync(instructionsSrc) ? fs.readFileSync(instructionsSrc, 'utf8') : null;
 
+  // DESIGN.md §11f -- mirrors deploy-global.js's own {{MEMORY_HOOK_SCRIPT_PATH}} substitution so
+  // recomputed hook content matches what was actually deployed, the same way resolvedServers.memory
+  // below mirrors deployMcpConfigs()'s path resolution.
+  const hooks = [];
+  const hooksSrcDir = path.join(ROOT, '.github', 'hooks');
+  if (fs.existsSync(hooksSrcDir)) {
+    const memoryHookScriptPath = path
+      .join(COPILOT_HOME, 'mcp-servers', 'memory-mcp-server', 'bin', 'memory-hook.js')
+      .replace(/\\/g, '/');
+    for (const entry of fs.readdirSync(hooksSrcDir, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith('.json')) {
+        const content = fs
+          .readFileSync(path.join(hooksSrcDir, entry.name), 'utf8')
+          .split('{{MEMORY_HOOK_SCRIPT_PATH}}')
+          .join(memoryHookScriptPath);
+        hooks.push({ name: entry.name, content });
+      }
+    }
+  }
+
   let resolvedServers = {};
   const mcpSrc = path.join(ROOT, 'sources', 'mcp-servers.json');
   if (fs.existsSync(mcpSrc)) {
@@ -93,7 +113,44 @@ function recomputeExpected() {
     }
   }
 
-  return { skills, agents, instructionsContent, resolvedServers };
+  return { skills, agents, instructionsContent, resolvedServers, hooks };
+}
+
+// DESIGN.md §11f -- same tiered logic planSkillsAndAgents uses (manifest names first, recompute
+// content as ground truth, orphan detection last), kept as its own small function rather than
+// generalizing planOne's closure -- this file's own existing convention is small duplicated
+// functions per artifact type, not a shared abstraction (see the comment on recomputeExpected).
+function planHooks(manifest, recomputed) {
+  const plan = [];
+  const knownNames = new Set();
+  const names = manifest ? manifest.data.hooksDeployed || [] : recomputed.hooks.map((h) => h.name);
+  for (const name of names) {
+    knownNames.add(name);
+    const target = path.join(COPILOT_HOME, 'hooks', name);
+    if (!fs.existsSync(target)) continue; // already gone, nothing to report
+    const liveContent = fs.readFileSync(target, 'utf8');
+    const expected = recomputed.hooks.find((h) => h.name === name);
+    if (!expected) {
+      plan.push({ name, target, action: 'skip-drift' }); // manifest lists it, current source doesn't
+    } else if (liveContent === expected.content) {
+      plan.push({ name, target, action: 'remove' });
+    } else {
+      plan.push({ name, target, action: 'skip-drift' });
+    }
+  }
+  const hooksDir = path.join(COPILOT_HOME, 'hooks');
+  if (fs.existsSync(hooksDir)) {
+    for (const entry of fs.readdirSync(hooksDir, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith('.json') && !knownNames.has(entry.name)) {
+        plan.push({
+          name: entry.name,
+          target: path.join(hooksDir, entry.name),
+          action: FLAGS.forceByName ? 'name-only' : 'skip-orphan',
+        });
+      }
+    }
+  }
+  return plan;
 }
 
 function planSkillsAndAgents(manifest, recomputed) {
@@ -335,6 +392,7 @@ function main() {
   const instructionsPath = path.join(COPILOT_HOME, 'copilot-instructions.md');
   const instructionsMatch = fs.existsSync(instructionsPath) && fs.readFileSync(instructionsPath, 'utf8') === recomputed.instructionsContent;
   const instructionsExists = fs.existsSync(instructionsPath);
+  const hooksPlan = planHooks(manifest, recomputed);
   const settingsPlan = planSettingsJson();
   const memoryServerDir = planMemoryServer();
   const memoryDataDir = planMemoryData();
@@ -365,6 +423,11 @@ function main() {
       console.log(pk.action === 'remove' ? `  remove ${surface} MCP entry: ${pk.key}` : `  SKIP (drift):  ${surface} MCP entry ${pk.key} -- modified since deploy`);
     }
   }
+
+  for (const name of hooksPlan.filter((h) => h.action === 'remove').map((h) => h.name)) console.log(`  remove hook:   ${name}`);
+  for (const h of hooksPlan.filter((h) => h.action === 'skip-drift')) console.log(`  SKIP (drift):  hook ${h.name} -- content on disk doesn't match expected`);
+  for (const h of hooksPlan.filter((h) => h.action === 'skip-orphan')) console.log(`  SKIP (orphan): hook ${h.name} -- not in current source, can't verify -- pass --force-by-name to remove by name alone`);
+  for (const h of hooksPlan.filter((h) => h.action === 'name-only')) console.log(`  remove hook:   ${h.name}  (--force-by-name, unverified -- not in current source)`);
 
   if (settingsPlan) {
     console.log(
@@ -412,6 +475,13 @@ function main() {
       report.skippedDrift.push('copilot-instructions.md');
     }
   }
+
+  for (const h of hooksPlan.filter((h) => h.action === 'remove' || h.action === 'name-only')) {
+    fs.rmSync(h.target, { force: true });
+    report.removed.push(h.action === 'name-only' ? `hook: ${h.name} (--force-by-name, unverified)` : `hook: ${h.name}`);
+  }
+  for (const h of hooksPlan.filter((h) => h.action === 'skip-drift')) report.skippedDrift.push(`hook: ${h.name}`);
+  for (const h of hooksPlan.filter((h) => h.action === 'skip-orphan')) report.leftAlone.push(`hook: ${h.name} (unrecognized, not in current source -- pass --force-by-name to remove)`);
 
   for (const [surface, plan] of Object.entries(mcpPlan)) {
     if (!plan || plan.action === 'skip-unowned' || plan.action === 'skip-unparseable') continue;

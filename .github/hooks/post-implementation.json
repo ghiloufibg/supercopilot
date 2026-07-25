@@ -1,11 +1,12 @@
 {
-  "_comment": "pm-agent-style post-implementation capture (DESIGN.md §6, §7). Block/allow/log only — deliberately stays within the JetBrains-safe subset (preToolUse there can deny but not rewrite input, per DESIGN.md §5). VERIFY the exact hook schema against Copilot's current hooks reference before relying on this in production; written against the event names documented as of DESIGN.md's research (postToolUse, agentStop) but not yet hands-on tested against a real Copilot hook runtime.",
+  "version": 1,
   "hooks": {
     "agentStop": [
       {
-        "description": "Reminds pm-agent to capture what was implemented, once a session/agent run completes. Log-only — does not block or modify anything.",
-        "action": "log",
-        "message": "Session ended. If this involved a non-trivial implementation, invoke pm-agent to document patterns/decisions before closing out (DESIGN.md §5f pm-agent spec)."
+        "type": "command",
+        "bash": "mkdir -p \"${COPILOT_HOME:-$HOME/.copilot}/logs\" && printf '%s session ended in %s -- if this involved a non-trivial implementation, invoke pm-agent to document patterns/decisions before closing out.\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"$PWD\" >> \"${COPILOT_HOME:-$HOME/.copilot}/logs/pm-agent-reminders.log\"",
+        "powershell": "$base = if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { Join-Path $HOME '.copilot' }; New-Item -ItemType Directory -Force (Join-Path $base 'logs') | Out-Null; Add-Content -Path (Join-Path $base 'logs/pm-agent-reminders.log') -Value (\"{0} session ended in {1} -- if this involved a non-trivial implementation, invoke pm-agent to document patterns/decisions before closing out.\" -f (Get-Date).ToUniversalTime().ToString('o'), $PWD)",
+        "timeoutSec": 10
       }
     ]
   }

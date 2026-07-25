@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "node \"{{MEMORY_HOOK_SCRIPT_PATH}}\"",
+        "powershell": "node '{{MEMORY_HOOK_SCRIPT_PATH}}'",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}

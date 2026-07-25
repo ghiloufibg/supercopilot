@@ -120,7 +120,10 @@ function installMemoryServer() {
 
   copyFile(path.join(srcDir, 'package.json'), path.join(destDir, 'package.json'));
   copyDir(path.join(srcDir, 'src'), path.join(destDir, 'src'));
-  console.log(`memory server code -> ${destDir}  (package.json + src/ only; no test/, no node_modules/ copied)`);
+  if (fs.existsSync(path.join(srcDir, 'bin'))) {
+    copyDir(path.join(srcDir, 'bin'), path.join(destDir, 'bin'));
+  }
+  console.log(`memory server code -> ${destDir}  (package.json + src/ + bin/ only; no test/, no node_modules/ copied)`);
 
   try {
     // shell: true is required on Windows -- npm is npm.cmd there, and execFileSync doesn't
@@ -138,6 +141,37 @@ function installMemoryServer() {
     );
   }
   return destDir;
+}
+
+// DESIGN.md §11b/§11f -- hooks were never deployed at all before this (confirmed by grepping this
+// file: no "hooks" reference existed). Repo-level .github/hooks/*.json only ever applies inside
+// this dev repo; the user-level location (COPILOT_HOME/hooks/, per GitHub's hooks docs) is what
+// makes a hook apply globally, across every project -- same reasoning as skills/agents/instructions
+// already deployed above. Same resolve-at-deploy-time idiom deployMcpConfigs() and deployTools()
+// already use for paths that can't be known until the memory server is actually installed
+// somewhere: {{MEMORY_HOOK_SCRIPT_PATH}} in the authored hook source gets substituted with the
+// real installed path. A no-op string replace for any hook file that doesn't contain it.
+function deployHooks(globalMemoryServerDir) {
+  const srcDir = path.join(ROOT, '.github', 'hooks');
+  const destDir = path.join(COPILOT_HOME, 'hooks');
+  const names = [];
+  if (!fs.existsSync(srcDir)) {
+    console.log(`hooks       -> ${destDir}  (0 hooks, no .github/hooks source directory)`);
+    return names;
+  }
+  const memoryHookScriptPath = path.join(globalMemoryServerDir, 'bin', 'memory-hook.js').replace(/\\/g, '/');
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    const content = fs
+      .readFileSync(path.join(srcDir, entry.name), 'utf8')
+      .split('{{MEMORY_HOOK_SCRIPT_PATH}}')
+      .join(memoryHookScriptPath);
+    fs.mkdirSync(destDir, { recursive: true });
+    fs.writeFileSync(path.join(destDir, entry.name), content);
+    names.push(entry.name);
+  }
+  console.log(`hooks       -> ${destDir}  (${names.length} hook files; user-level location per GitHub's hooks docs -- applies across every repo, not just this one)`);
+  return names;
 }
 
 // UNINSTALL-DESIGN.md §4 -- these three files are shared, mixed-ownership locations. Deploy used
@@ -350,6 +384,7 @@ function writeManifest(data) {
     agents: data.agents,
     instructionsFile: data.instructionsFile,
     memoryServerDir: data.memoryServerDir,
+    hooksDeployed: data.hooksDeployed,
     mcpConfigs: data.mcpConfigs,
     vscodeSettingsPatched: data.vscodeSettingsPatched,
     toolsDeployed: data.toolsResult.deployed,
@@ -371,6 +406,7 @@ const skills = deploySkills();
 const agents = deployAgents();
 const instructionsFile = deployInstructions();
 const globalMemoryServerDir = installMemoryServer();
+const hooks = deployHooks(globalMemoryServerDir);
 const mcpConfigs = deployMcpConfigs(globalMemoryServerDir, isFirstDeploy);
 const agentsPathForSettings = patchVsCodeAgentLocations();
 const vscodeSettingsPatched = detectVsCodeSettingsPatch(agentsPathForSettings);
@@ -381,6 +417,7 @@ writeManifest({
   agents,
   instructionsFile,
   memoryServerDir: globalMemoryServerDir,
+  hooksDeployed: hooks,
   mcpConfigs,
   vscodeSettingsPatched,
   toolsResult,

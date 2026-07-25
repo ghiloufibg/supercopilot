@@ -38,6 +38,10 @@ test('index.js has no network-capable imports beyond the MCP SDK itself', async 
   await assertNoNetworkImports('src/index.js');
 });
 
+test('memory-hook.js has no network-capable imports', async () => {
+  await assertNoNetworkImports('bin/memory-hook.js');
+});
+
 test('the MCP SDK stdio transport module has no network-capable imports', async () => {
   await assertNoNetworkImports('node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js');
 });
