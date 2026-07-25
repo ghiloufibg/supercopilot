@@ -42,6 +42,10 @@ test('memory-hook.js has no network-capable imports', async () => {
   await assertNoNetworkImports('bin/memory-hook.js');
 });
 
+test('memory-checkpoint-hook.js has no network-capable imports', async () => {
+  await assertNoNetworkImports('bin/memory-checkpoint-hook.js');
+});
+
 test('the MCP SDK stdio transport module has no network-capable imports', async () => {
   await assertNoNetworkImports('node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js');
 });

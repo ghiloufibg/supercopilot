@@ -87,12 +87,17 @@ function recomputeExpected() {
     const memoryHookScriptPath = path
       .join(COPILOT_HOME, 'mcp-servers', 'memory-mcp-server', 'bin', 'memory-hook.js')
       .replace(/\\/g, '/');
+    const memoryCheckpointHookScriptPath = path
+      .join(COPILOT_HOME, 'mcp-servers', 'memory-mcp-server', 'bin', 'memory-checkpoint-hook.js')
+      .replace(/\\/g, '/');
     for (const entry of fs.readdirSync(hooksSrcDir, { withFileTypes: true })) {
       if (entry.isFile() && entry.name.endsWith('.json')) {
         const content = fs
           .readFileSync(path.join(hooksSrcDir, entry.name), 'utf8')
           .split('{{MEMORY_HOOK_SCRIPT_PATH}}')
-          .join(memoryHookScriptPath);
+          .join(memoryHookScriptPath)
+          .split('{{MEMORY_CHECKPOINT_HOOK_SCRIPT_PATH}}')
+          .join(memoryCheckpointHookScriptPath);
         hooks.push({ name: entry.name, content });
       }
     }

@@ -8,6 +8,14 @@
         "powershell": "node '{{MEMORY_HOOK_SCRIPT_PATH}}'",
         "timeoutSec": 10
       }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "node \"{{MEMORY_CHECKPOINT_HOOK_SCRIPT_PATH}}\"",
+        "powershell": "node '{{MEMORY_CHECKPOINT_HOOK_SCRIPT_PATH}}'",
+        "timeoutSec": 10
+      }
     ]
   }
 }

@@ -41,6 +41,9 @@ const GLOBAL_FILE = path.join(STORE_DIR, 'global.json');
 const PROJECTS_DIR = path.join(STORE_DIR, 'projects');
 const ARCHIVE_DIR = path.join(STORE_DIR, 'archive');
 const GLOBAL_OVERFLOW_LOG = path.join(ARCHIVE_DIR, 'global-overflow.jsonl');
+const SESSIONS_DIR = path.join(STORE_DIR, 'sessions');
+const LAST_WRITE_MARKER = path.join(STORE_DIR, '.last-write-at');
+const SESSION_MARKER_STALE_MS = 24 * 60 * 60 * 1000;
 
 const DEFAULT_PROJECT_PURGE_DAYS = 90;
 const DEFAULT_GLOBAL_CAP = 50;
@@ -238,6 +241,12 @@ export async function writeMemory(key, value, opts = {}) {
       };
       if (scope === 'project') data._meta.lastTouchedAt = now;
       await atomicWriteJSON(filePath, data);
+      // Best-effort activity marker for shouldWriteCheckpoint() (DESIGN.md §11d, sub-phase
+      // 3b-3) -- sessionEnd has no transcript to inspect, so "did anything get saved this
+      // session" is inferred from this timestamp instead. Not lock-protected: a slightly stale
+      // read under heavy concurrency only affects a heuristic, not data integrity.
+      await mkdir(STORE_DIR, { recursive: true });
+      await writeFile(LAST_WRITE_MARKER, now, 'utf8').catch(() => {});
       return { key, updatedAt: now };
     })
   );
@@ -411,4 +420,83 @@ export async function loadDigest({ cwd, maxEntries = 20 } = {}) {
   }
 
   return surfaced;
+}
+
+// ---- sessionEnd checkpoint fallback (DESIGN.md §11d, sub-phase 3b-3) ----
+//
+// sessionEnd is notification-only and, per GitHub's documented payload for that event, doesn't
+// receive a transcript path the way agentStop does -- so unlike the original §11d draft, this
+// fallback cannot include a verbatim transcript tail; it records what sessionEnd actually gives
+// us (session id, cwd, termination reason). Whether *anything* was saved this session is inferred
+// from two small markers rather than transcript inspection: a per-session "started" marker
+// (written by recordSessionStart, called from bin/memory-hook.js at sessionStart) and a global
+// "last write" timestamp (touched by every successful writeMemory() call above). Not perfectly
+// precise under heavily overlapping concurrent sessions -- a write from a *different* concurrent
+// session can suppress this one's checkpoint -- but a reasonable approximation given what
+// sessionEnd exposes, and it fails toward checkpointing (redundant, harmless) rather than
+// silently skipping one when uncertain.
+
+function sanitizeSessionId(id) {
+  return String(id).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 100) || 'unknown';
+}
+
+function sessionMarkerPath(sessionId) {
+  return path.join(SESSIONS_DIR, `${sanitizeSessionId(sessionId)}.json`);
+}
+
+export async function recordSessionStart({ sessionId, cwd }) {
+  if (!sessionId) return;
+  await mkdir(SESSIONS_DIR, { recursive: true });
+  const marker = { sessionId, cwd: cwd || null, startedAt: new Date().toISOString() };
+  await writeFile(sessionMarkerPath(sessionId), JSON.stringify(marker), 'utf8');
+}
+
+async function pruneStaleSessionMarkers() {
+  if (!existsSync(SESSIONS_DIR)) return;
+  const cutoff = Date.now() - SESSION_MARKER_STALE_MS;
+  for (const file of await readdir(SESSIONS_DIR)) {
+    if (!file.endsWith('.json')) continue;
+    const p = path.join(SESSIONS_DIR, file);
+    const data = await readJSON(p, null);
+    const startedAt = data?.startedAt ? Date.parse(data.startedAt) : null;
+    // A marker with no parseable startedAt, or older than the cutoff, is abandoned -- e.g. a
+    // session that crashed before sessionEnd ever fired to consume it.
+    if (startedAt === null || startedAt < cutoff) await rm(p, { force: true });
+  }
+}
+
+// Consumes (deletes) the session's start marker as a side effect -- one-shot, matching the
+// nudge sentinel's own "checked once, then gone" pattern (DESIGN.md §11d).
+export async function shouldWriteCheckpoint(sessionId) {
+  await pruneStaleSessionMarkers();
+
+  if (!sessionId) return true; // no way to correlate -- checkpoint to be safe, not to lose data
+
+  const markerPath = sessionMarkerPath(sessionId);
+  let startedAt = null;
+  if (existsSync(markerPath)) {
+    const marker = await readJSON(markerPath, null);
+    startedAt = marker?.startedAt || null;
+    await rm(markerPath, { force: true });
+  }
+  if (!startedAt) return true; // sessionStart never recorded (or was already pruned) -- checkpoint
+
+  const lastWriteAt = existsSync(LAST_WRITE_MARKER) ? (await readFile(LAST_WRITE_MARKER, 'utf8')).trim() : null;
+  if (!lastWriteAt) return true; // nothing has ever been written -- definitely checkpoint
+
+  return lastWriteAt < startedAt; // a write at/after this session's start suppresses the fallback
+}
+
+export async function writeCheckpoint({ sessionId, cwd, reason }) {
+  const timestamp = new Date().toISOString();
+  const note =
+    'Auto-generated fallback checkpoint -- no write_memory call was made during this session. ' +
+    'Lower fidelity than a model-authored memory (DESIGN.md §11d).';
+  const value = JSON.stringify({ sessionId: sessionId || null, cwd: cwd || null, reason: reason || null, note });
+
+  if (cwd) {
+    const project = resolveProjectId(cwd);
+    return writeMemory(`checkpoint/${project}/${timestamp}`, value, { scope: 'project', project });
+  }
+  return writeMemory(`checkpoint/unknown/${timestamp}`, value, { scope: 'global' });
 }

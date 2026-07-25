@@ -13,7 +13,7 @@
 // blocking the session -- a bug in this script must never be able to break a Copilot session.
 
 import { readFileSync } from 'node:fs';
-import { loadDigest } from '../src/store.js';
+import { loadDigest, recordSessionStart } from '../src/store.js';
 
 const MAX_ENTRIES = 20;
 const MAX_TOTAL_CHARS = 8000; // ~2K tokens, rough 4-chars-per-token heuristic (DESIGN.md §11d)
@@ -50,7 +50,15 @@ function formatDigest(entries) {
 
 async function main() {
   const payload = readHookPayload();
-  const entries = await loadDigest({ cwd: payload.cwd || process.cwd(), maxEntries: MAX_ENTRIES });
+  const sessionId = payload.sessionId || payload.session_id;
+  const cwd = payload.cwd || process.cwd();
+
+  // Best-effort, non-fatal -- sub-phase 3b-3's sessionEnd checkpoint (DESIGN.md §11d) needs to
+  // know this session started, but a failure recording that must never suppress the actual
+  // auto-load below.
+  await recordSessionStart({ sessionId, cwd }).catch(() => {});
+
+  const entries = await loadDigest({ cwd, maxEntries: MAX_ENTRIES });
 
   if (entries.length === 0) {
     // Deliberate no-op, not an empty additionalContext -- avoids sending boilerplate on every
