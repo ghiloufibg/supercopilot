@@ -110,36 +110,67 @@ function deployInstructions() {
 }
 
 function installMemoryServer() {
-  // Real install, not a reference: copies package.json + src/ (never node_modules/, never
-  // test/ -- those are dev-only) to a location that has nothing to do with where this repo
-  // lives, then runs npm install THERE. This is what makes it genuinely shared/global rather
-  // than every project's MCP config just pointing back at this dev repo's own path -- after
-  // this, the dev repo could be moved, renamed, or deleted and the installed copy keeps working.
+  // Deploys a self-contained copy that needs NO npm install -- the load-bearing property for
+  // restricted/air-gapped environments where the public npm registry is blocked. All third-party
+  // dependencies (the MCP SDK + zod) are already inlined into the committed bundle
+  // memory-mcp-server/dist/index.js, produced at build time (npm run build, on a machine with
+  // registry access). Deploy just copies files:
+  //   - dist/index.js  -> destDir/src/index.js  (the self-contained server; MCP config already
+  //                       points at src/index.js, so that path stays stable)
+  //   - src/store.js   -> destDir/src/store.js   (kept external to the bundle so the server and
+  //                       the bin/ hooks share ONE real store file)
+  //   - bin/*          -> destDir/bin/*          (memory-automation hooks; import ../src/store.js)
+  //   - a deps-free package.json (just "type":"module" etc.) so nothing ever tries to install.
+  // Nothing here shells out to npm, so a blocked registry can't break the deploy. The installed
+  // copy still has nothing to do with where this dev repo lives -- move/rename/delete this repo
+  // afterward and the installed server keeps working, same as before.
   const srcDir = path.join(ROOT, 'memory-mcp-server');
   const destDir = path.join(COPILOT_HOME, 'mcp-servers', 'memory-mcp-server');
 
-  copyFile(path.join(srcDir, 'package.json'), path.join(destDir, 'package.json'));
-  copyDir(path.join(srcDir, 'src'), path.join(destDir, 'src'));
+  const bundlePath = path.join(srcDir, 'dist', 'index.js');
+  if (!fs.existsSync(bundlePath)) {
+    // The bundle is a committed artifact -- a fresh clone has it. If it's missing, the source
+    // tree is in a half-built state; building it needs registry access (esbuild), which is
+    // exactly what the restricted target machine may not have, so fail loudly here rather than
+    // deploying a server that can't start.
+    console.error(
+      `\nmemory server bundle MISSING: ${bundlePath} does not exist. It is a committed build ` +
+        `artifact and should be present in a clean checkout. Regenerate it on a machine with npm ` +
+        `registry access by running "npm run build" inside ${srcDir}, commit the result, then ` +
+        `re-run the deploy. Nothing was deployed for the memory server.\n`
+    );
+    process.exit(1);
+  }
+
+  // dist/index.js is the deployed server, placed at the src/index.js path the MCP config expects.
+  copyFile(bundlePath, path.join(destDir, 'src', 'index.js'));
+  // store.js stays a plain, single source of truth -- shared by the server bundle (imports it as
+  // ./store.js) and by every bin/ hook (imports it as ../src/store.js).
+  copyFile(path.join(srcDir, 'src', 'store.js'), path.join(destDir, 'src', 'store.js'));
   if (fs.existsSync(path.join(srcDir, 'bin'))) {
     copyDir(path.join(srcDir, 'bin'), path.join(destDir, 'bin'));
   }
-  console.log(`memory server code -> ${destDir}  (package.json + src/ + bin/ only; no test/, no node_modules/ copied)`);
 
-  try {
-    // shell: true is required on Windows -- npm is npm.cmd there, and execFileSync doesn't
-    // resolve through a shell by default, so without this it fails to find npm at all (found
-    // by testing: ran fine invoked directly, failed silently through execFileSync until this
-    // was added).
-    execFileSync('npm', ['install'], { cwd: destDir, stdio: 'inherit', shell: true });
-    console.log(`memory server deps -> installed at ${destDir} (shared by every project -- installed once, here, not per-project)`);
-  } catch (err) {
-    console.error(
-      `\nnpm install FAILED in ${destDir} -- see the output above for why (e.g. no registry access). ` +
-        `The memory server's code was still copied, but it won't run until its dependency is installed ` +
-        `-- either fix registry access and re-run "npm run deploy:global", or run "npm install" by hand ` +
-        `inside ${destDir}.\n`
-    );
-  }
+  // A minimal, dependency-free package.json: enough for Node to treat the .js files as ESM
+  // ("type":"module") and to identify the install, but with NO dependencies key -- so neither a
+  // stray `npm install` here nor any tooling has anything left to fetch.
+  const sourcePkg = JSON.parse(fs.readFileSync(path.join(srcDir, 'package.json'), 'utf8'));
+  const deployedPkg = {
+    name: sourcePkg.name,
+    version: sourcePkg.version,
+    private: true,
+    license: sourcePkg.license,
+    description: sourcePkg.description,
+    type: 'module',
+    bin: { 'memory-mcp-server': './src/index.js' },
+  };
+  fs.mkdirSync(destDir, { recursive: true });
+  fs.writeFileSync(path.join(destDir, 'package.json'), JSON.stringify(deployedPkg, null, 2) + '\n');
+
+  console.log(
+    `memory server -> ${destDir}  (self-contained bundle + store.js + bin/ + deps-free package.json; ` +
+      `no npm install, no node_modules -- deploys with the registry blocked)`
+  );
   return destDir;
 }
 

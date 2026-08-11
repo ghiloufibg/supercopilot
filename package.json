@@ -1,6 +1,6 @@
 {
   "name": "copilot-superclaude",
-  "version": "0.1.0-phase1",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "license": "MIT",
   "description": "A GitHub Copilot port of the SuperClaude framework: commands, personas, behavioral modes, and a Memory MCP server for Copilot CLI, VS Code, and JetBrains. Project name is provisional.",
@@ -9,6 +9,7 @@
     "generate": "node scripts/generate.js all",
     "generate:skills": "node scripts/generate.js skills",
     "generate:mcp-configs": "node scripts/generate.js mcp-configs",
+    "build:memory": "npm --prefix memory-mcp-server run build",
     "deploy:global": "node scripts/generate.js all && node scripts/deploy-global.js",
     "uninstall:global": "node scripts/uninstall-global.js"
   }

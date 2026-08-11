@@ -15,7 +15,7 @@ A GitHub Copilot port of the SuperClaude framework, targeting Copilot CLI, VS Co
 ## Prerequisites
 
 - **Node.js 18+** — runs the generator, the Memory MCP server, and the `npx`-invoked MCP servers below.
-- **`npm install` inside `memory-mcp-server/`** — a manual one-time step, not automatic. Without it, the `memory` server won't start.
+- **No `npm install` needed for the memory server** — it deploys as a self-contained bundle (`dist/index.js`, all dependencies inlined), so it runs even where the npm registry is blocked. `npm install` inside `memory-mcp-server/` is only needed for *development* (running the tests and rebuilding the bundle). See "Offline / restricted-registry install" below.
 - **`git` on PATH** (optional but recommended) — the memory hooks use `git remote get-url origin` to identify which repo a project-scoped memory belongs to. Falls back to the folder name if `git` isn't found or the folder isn't a repo, so it's not a hard requirement, just lower fidelity without it.
 - **Internet access on first run** for `context7`, `sequential-thinking`, `playwright`, and `chrome-devtools` — each is configured as `npx -y <package>`, which fetches it from the npm registry the first time it launches, then caches it.
 - **A local Chrome/Chromium install** for `chrome-devtools-mcp` to drive. Playwright may need its own separate `npx playwright install` step for browser binaries — not yet confirmed whether `@playwright/mcp` handles that automatically.
@@ -121,7 +121,7 @@ Copies/generates this repo's content to the actual locations Copilot reads from 
 | 32 skills | `~/.copilot/skills/<name>/SKILL.md` | CLI, VS Code (JetBrains: preview) |
 | 31 agent files (flattened) | `~/.copilot/agents/*.agent.md` | CLI (JetBrains: likely, unconfirmed) |
 | `copilot-instructions.md` | `~/.copilot/copilot-instructions.md` | CLI only — VS Code/JetBrains global instructions are settings-based, not a drop-in file |
-| **Memory MCP server itself** (`package.json` + `src/` + `bin/`, never `test/` or `node_modules/`) | `~/.copilot/mcp-servers/memory-mcp-server/` — a real **install**, not a reference back into this repo | `npm install` is run there directly; confirmed working, including on Windows (`execFileSync` needs `shell: true` for `npm` — found and fixed during testing) |
+| **Memory MCP server** (the committed `dist/index.js` bundle copied in as `src/index.js`, plus `src/store.js`, `bin/`, and a deps-free `package.json`; never `test/` or `node_modules/`) | `~/.copilot/mcp-servers/memory-mcp-server/` — a self-contained copy, not a reference back into this repo | **No `npm install` at deploy time** — all dependencies are inlined in the bundle, so the deploy works with the registry blocked. Deploy aborts with instructions if `dist/index.js` is missing from the source tree. |
 | MCP servers (5, `memory` pointing at the installed copy above, not this repo) | `~/.copilot/mcp-config.json` | CLI — confirmed |
 | Same MCP servers | VS Code's user-profile `mcp.json`, if found on the machine | Written only if VS Code's user-data folder is actually detected — otherwise the script prints the exact JSON to paste in via "MCP: Add Server" → Global |
 | Same MCP servers | `~/.config/github-copilot/intellij/mcp.json` | Written per documentation, not yet hands-on confirmed |
@@ -129,7 +129,13 @@ Copies/generates this repo's content to the actual locations Copilot reads from 
 
 **Memory storage is shared globally by design, and sharded by project since the memory-automation work**: `~/.copilot/memory-data/global.json` (loads into every session everywhere) plus `~/.copilot/memory-data/projects/<id>.json` — one file per repo, keyed off a hashed `git remote get-url origin` so it survives re-clones. A pre-existing flat `memory.json` from before sharding existed is migrated into `global.json` automatically the first time it's touched, renamed to `memory.json.migrated` rather than deleted. Verified live (pre-sharding): wrote a key from one directory, read it back from a completely different one, got the same value; sharding/locking is unit-tested (see [Memory Automation](#memory-automation)) but not yet re-confirmed live.
 
-**This repo can now be moved, renamed, or deleted without breaking anything already deployed** — the installed memory server at `~/.copilot/mcp-servers/memory-mcp-server/` is a real, independent copy with its own `node_modules`, not a path back into this repo. Re-running `deploy:global` re-syncs it from whatever this repo currently contains.
+**This repo can now be moved, renamed, or deleted without breaking anything already deployed** — the installed memory server at `~/.copilot/mcp-servers/memory-mcp-server/` is a self-contained copy (a single bundled `src/index.js` with all dependencies inlined, plus `src/store.js` and the `bin/` hooks), not a path back into this repo and not dependent on any `node_modules`. Re-running `deploy:global` re-syncs it from whatever this repo currently contains.
+
+### Offline / restricted-registry install
+Corporate/air-gapped machines where the public npm registry is blocked used to fail here: the old deploy ran `npm install` inside the installed memory server, and with no registry that step errored out. The server now ships as a single self-contained bundle instead, so deploy never touches npm:
+
+1. **On a machine with npm registry access** (a maintainer's machine, or CI): `cd memory-mcp-server && npm install && npm run build`. This regenerates `dist/index.js` with the MCP SDK and `zod` inlined. Commit the result — it's a tracked build artifact. (Do this after any change to `src/index.js` or `src/store.js`; the bundle is what actually ships.)
+2. **On the restricted machine**: clone/copy the repo (the committed `dist/index.js` comes with it) and run `npm run deploy:global`. The memory server is deployed by plain file copy — no `npm install`, no network. The other five MCP servers (`context7`, `sequential-thinking`, `playwright`, `chrome-devtools`) are `npx -y` and *do* still need registry access on first launch; only the local `memory` server is now fully offline-capable.
 
 **`chat.agentFilesLocations` in VS Code's `settings.json` is now patched automatically** (`scripts/patch-vscode-settings.js`, called by `deploy:global`) — no manual step. Since `settings.json` is JSONC (comments and trailing commas allowed, which a plain `JSON.parse`/`stringify` round-trip would silently destroy), it's patched via surgical text insertion instead: the file is backed up first, unconditionally; if the key already exists it's left alone with instructions printed rather than risking a bad merge; the result is sanity-checked as valid JSON before anything is written, and the original is left untouched if that check fails. Tested against 6 scenarios (no file, plain JSON, comments + trailing commas, key already present, empty `{}`, pre-existing trailing comma) — all produce clean, valid output. If VS Code isn't installed on the machine running the deploy script, it says so and does nothing, same as the MCP config step.
 
@@ -155,9 +161,11 @@ A `commit-msg` hook lives in `.githooks/` (tracked, not `.git/hooks/` which neve
 ## Memory MCP server
 ```
 cd memory-mcp-server
-npm install
-npm test          # 34 tests across 8 files: CRUD + concurrency, sharding/lifecycle, legacy migration,
-                   # sessionStart/agentStop/sessionEnd hook behavior, network-isolation
+npm install        # dev only — for the tests and the bundler; the deployed server needs no install
+npm run build      # regenerate the committed dist/index.js bundle (run after editing src/, then commit)
+npm test          # 39 tests across 9 files: CRUD + concurrency, sharding/lifecycle, legacy migration,
+                   # sessionStart/agentStop/sessionEnd hook behavior, network-isolation,
+                   # and the shipped dist bundle (starts with no node_modules, persists across runs)
 npm start          # runs the server directly over stdio, for manual smoke-testing
 ```
 
@@ -190,8 +198,9 @@ Three Copilot CLI hooks (`.github/hooks/session-memory.json`), all thin wrappers
 ### Automated
 - Generator produces structurally correct output for all 29 commands, checked against the documented CLI (`mcpServers`)/VS Code (`servers`) formats.
 - Magic/Morphllm/Tavily confirmed absent everywhere, not just unused.
-- Memory MCP server: all 34 tests pass, including a real cross-process concurrent-write race exercised with separate `node` processes (not just concurrent promises in one process) and required a real file-locking fix, not just the original in-process queue (see `memory-mcp-server/src/store.js`).
+- Memory MCP server: all 39 tests pass, including a real cross-process concurrent-write race exercised with separate `node` processes (not just concurrent promises in one process) and required a real file-locking fix, not just the original in-process queue (see `memory-mcp-server/src/store.js`).
 - Memory MCP server responds correctly to a real MCP `initialize` handshake and lists all 4 tools correctly via `tools/list` (manually smoke-tested, not just unit-tested in isolation).
+- Bundled deploy: the shipped `dist/index.js` bundle is spawned with no `node_modules` anywhere on its path (`test/dist.test.js`) and confirmed to start, list all four tools, and persist a memory that a later bundle process reads back — proving the "deploys with the npm registry blocked" claim. `test/network-isolation.test.js` additionally asserts the bundle contains zero network-capable imports, so tree-shaking really did drop the SDK's unused HTTP/SSE transport code (express/cors/eventsource).
 - Memory automation hooks (`sessionStart`/`agentStop`/`sessionEnd`): unit-tested end-to-end by spawning each hook script as a real subprocess with a hand-built JSON payload on stdin and asserting its stdout — auto-load digest content and capping, once-per-session nudge dedup via both `stop_hook_active` and the sentinel file, the `config/nudge` off-switch, the duration trigger working independently of transcript parsing, and the checkpoint fallback firing only when nothing else was saved.
 - Jira/Confluence/GitLab scripts: 16 GitLab unit tests plus the pre-existing Jira/Confluence tests all pass (`node --test tools/*/test/*.test.js`), covering URL construction, auth header shape (Basic email:token vs. GitLab's bare `PRIVATE-TOKEN`), missing-credential errors, non-2xx errors not leaking the token/PAT, and digest formatting.
 

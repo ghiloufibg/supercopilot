@@ -17,7 +17,7 @@ Alongside the plugin, `tools/` holds a second, separate capability: read-only Ji
 This is the single most important thing to internalize before editing:
 
 - **Author here:** `sources/commands/*.md` (29 files, including `jira.md`/`confluence.md`/`gitlab.md`), `sources/mcp-servers.json`, `.github/agents/*.agent.md` (personas + orchestrator + mode agents), `.github/agents/experts/*.agent.md` (9 Business Panel experts), `.github/copilot-instructions.md`, `.github/hooks/*.json` (Copilot CLI hooks — pm-agent capture reminder, plus the memory-automation pipeline, see below), `tools/` (the Jira/Confluence/GitLab scripts themselves).
-- **Never hand-edit — generated, overwritten on every run:** `.github/skills/*/SKILL.md`, `.github/prompts/*.prompt.md`, `.copilot/mcp-config.json`, `.vscode/mcp.json`.
+- **Never hand-edit — generated, overwritten on every run:** `.github/skills/*/SKILL.md`, `.github/prompts/*.prompt.md`, `.copilot/mcp-config.json`, `.vscode/mcp.json`, `memory-mcp-server/dist/index.js` (the bundled server — regenerate with `npm run build`, see "Bundled, install-free deploy" below).
 - **Never hand-edit — deployed, overwritten on every `deploy:global` run:** anything under `~/.copilot/` or the IDEs' global MCP config paths. These are a *copy*, not a symlink — this repo can be moved/deleted after deploying without breaking what's already installed. `~/.copilot/tools/` is the one exception to "deployed on every run": it's opt-in (`--all` / `--tool=jira,confluence,gitlab`), and `~/.copilot/tools/.env` specifically is never overwritten once created, since it holds real credentials.
 
 One authored command source (`sources/commands/<name>.md`, frontmatter + body) generates a matched `SKILL.md` + `.prompt.md` pair via `scripts/generate.js`. One `sources/mcp-servers.json` generates the CLI, VS Code, *and* JetBrains MCP configs (JetBrains reads the same `.vscode/mcp.json` VS Code does — no separate artifact).
@@ -35,14 +35,31 @@ Memory MCP server (`memory-mcp-server/`, the one piece of custom runtime code in
 
 ```
 cd memory-mcp-server
-npm install                 # required once — not automatic, the server won't start without it
-npm test                    # node --test test/*.test.js — 34 tests across 8 files (CRUD/concurrency,
+npm install                 # required once for dev (tests + build tooling) — not needed to RUN the
+                            # deployed server, which ships as a dependency-free bundle (see below)
+npm run build               # regenerate the committed dist/index.js bundle via esbuild — run this
+                            # after ANY change to src/index.js or src/store.js, and commit the result
+npm test                    # node --test test/*.test.js — 39 tests across 9 files (CRUD/concurrency,
                              # sharding/lifecycle, legacy migration, the three memory-automation hooks,
-                             # network-isolation)
+                             # network-isolation, and the shipped dist bundle)
 node --test test/store.test.js               # run a single test file
 node --test test/network-isolation.test.js   # network-isolation check only
+node --test test/dist.test.js                # bundle runs with no node_modules + persists across runs
 npm start                   # run the server directly over stdio for manual smoke-testing
 ```
+
+### Bundled, install-free deploy
+The memory server has one real dependency (`@modelcontextprotocol/sdk`, which itself is a 90+ package
+tree because it also ships express/cors/eventsource for HTTP+SSE transports this stdio-only server never
+uses) plus `zod`. To make it deploy in **restricted/air-gapped environments where the public npm registry
+is blocked**, `npm run build` (esbuild, `build.js`) tree-shakes from the two modules we actually import
+and inlines everything into a single committed file, `dist/index.js` — the express/cors/eventsource code
+and all `node:http`/`node:net` imports are unreachable and get dropped. `./store.js` is kept *external*
+(it has no third-party deps and the `bin/` hooks import it too), so it stays one real shared file beside
+the bundle. `test/network-isolation.test.js` asserts the shipped `dist/index.js` contains zero
+network-capable imports; `test/dist.test.js` spawns it with no `node_modules` present to prove it's
+self-contained. Building needs registry access (esbuild), so it happens on a maintainer machine; the
+committed bundle is what restricted machines deploy. See `README.md` for the offline install flow.
 
 There is no build step, linter, or type checker configured anywhere in this repo — `npm test` (inside `memory-mcp-server/`) is the only automated check.
 
@@ -57,13 +74,13 @@ Parses `---\n<frontmatter>\n---\n<body>` from each `sources/commands/*.md` file.
 `sources/mcp-servers.json` → `{command, args, env}` per server, re-keyed as `mcpServers` (CLI) or `servers` (VS Code); JetBrains shares the VS Code file (high-confidence from docs, not yet hands-on confirmed).
 
 ### The deployer (`scripts/deploy-global.js`)
-Runs the generator, then copies output to `~/.copilot/skills/`, `~/.copilot/agents/*.agent.md` (agent files flattened from `.github/agents/` and `.github/agents/experts/`), `~/.copilot/copilot-instructions.md`, and `~/.copilot/mcp-config.json`. The Memory MCP server itself (`package.json` + `src/` + `bin/`, deliberately never `test/` or `node_modules/`) is deployed as a real independent **install** at `~/.copilot/mcp-servers/memory-mcp-server/` with its own `npm install` run there — not a path reference back into this repo. This is what makes the repo safely movable/deletable post-deploy.
+Runs the generator, then copies output to `~/.copilot/skills/`, `~/.copilot/agents/*.agent.md` (agent files flattened from `.github/agents/` and `.github/agents/experts/`), `~/.copilot/copilot-instructions.md`, and `~/.copilot/mcp-config.json`. The Memory MCP server is deployed as a self-contained copy at `~/.copilot/mcp-servers/memory-mcp-server/` — the committed bundle `dist/index.js` is copied in **as `src/index.js`** (so the MCP config's `src/index.js` path stays stable), alongside the real `src/store.js` (kept external to the bundle, shared with the `bin/` hooks) and a deps-free `package.json` (just `"type":"module"`, no `dependencies` key). **No `npm install` runs at deploy time** — every third-party dependency is already inlined into the bundle, so the deploy succeeds even with the npm registry blocked (this was the original failure mode in corporate environments). If `dist/index.js` is missing from the source tree, `installMemoryServer()` aborts the whole deploy with instructions to run `npm run build` first. This copy still has nothing to do with where this repo lives, so the repo stays safely movable/deletable post-deploy.
 
 `.github/hooks/*.json` is copied to `~/.copilot/hooks/` (the user-level location per GitHub's hooks docs — `.github/hooks/` alone only ever applies inside this dev repo, which is why it was previously never deployed at all). Any occurrence of `{{MEMORY_HOOK_SCRIPT_PATH}}`, `{{MEMORY_NUDGE_HOOK_SCRIPT_PATH}}`, or `{{MEMORY_CHECKPOINT_HOOK_SCRIPT_PATH}}` in an authored hook file is substituted with the real installed path under the memory server directory above — same resolve-at-deploy-time idiom as the MCP config's `${workspaceFolder}` handling and the tools' skill-path patching, just for hook scripts instead.
 
 Also invokes `scripts/patch-vscode-settings.js`, which surgically inserts `chat.agentFilesLocations` into VS Code's `settings.json` via text insertion rather than `JSON.parse`/`stringify` (the file is JSONC — comments and trailing commas that a naive round-trip would destroy). Always backs up first; leaves the key alone and prints instructions if it already exists; validates the result parses as JSON before writing, discards the change otherwise.
 
-`scripts/deploy-global.js` also handles the opt-in Jira/Confluence/GitLab tools (`--all` / `--tool=jira,confluence,gitlab`), deployed to `~/.copilot/tools/` — a sibling to `skills/`/`agents/`/`mcp-servers/`, not inside any of them. An unrecognized `--tool=` name is validated and rejected *before* any deploy step runs at all, so a typo can't cause a partial deploy. This is unlike the memory server: no `npm install` step, since `tools/` has zero dependencies by design.
+`scripts/deploy-global.js` also handles the opt-in Jira/Confluence/GitLab tools (`--all` / `--tool=jira,confluence,gitlab`), deployed to `~/.copilot/tools/` — a sibling to `skills/`/`agents/`/`mcp-servers/`, not inside any of them. An unrecognized `--tool=` name is validated and rejected *before* any deploy step runs at all, so a typo can't cause a partial deploy. Like the memory server (which deploys a pre-built bundle), the tools install with no `npm install` step — `tools/` has zero dependencies by design.
 
 ### Memory MCP server (`memory-mcp-server/`)
 A local-only MCP server (`src/index.js` + `src/store.js`) implementing `write_memory`/`read_memory`/`list_memories`/`delete_memory`, each accepting an optional `scope: "global" | "project"` argument (default `"global"`). Storage is **sharded**, not one flat file: `~/.copilot/memory-data/global.json` for global-scope entries, `~/.copilot/memory-data/projects/<project-id>.json` (one file per repo, `project-id` = a hashed, normalized `git remote get-url origin`) for project-scope entries. A pre-existing flat `memory.json` from before sharding existed auto-migrates into `global.json` the first time the store is touched, renamed to `memory.json.migrated` rather than deleted.

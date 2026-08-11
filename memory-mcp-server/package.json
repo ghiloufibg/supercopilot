@@ -1,18 +1,23 @@
 {
   "name": "@copilot-superclaude/memory-mcp-server",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "license": "MIT",
-  "description": "Local-only MCP server implementing write_memory/read_memory/list_memories/delete_memory. Zero outbound network calls by design — see test/network-isolation.test.js.",
+  "description": "Local-only MCP server implementing write_memory/read_memory/list_memories/delete_memory. Zero outbound network calls by design — see test/network-isolation.test.js. Shipped as a self-contained bundle (dist/index.js) so it deploys with no npm install.",
   "type": "module",
   "bin": {
     "memory-mcp-server": "./src/index.js"
   },
   "scripts": {
     "start": "node src/index.js",
+    "build": "node build.js",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
   }
 }
