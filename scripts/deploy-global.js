@@ -238,7 +238,16 @@ function deepEqual(a, b) {
 // content gets preserved under "_preSupercopilotBackup" before being overwritten, instead of
 // silently discarded. Not applied on subsequent deploys (manifest already present) -- that's just
 // this plugin refreshing its own previously-deployed config, not a collision with someone else's.
-function mergeManagedServers(configPath, serversKey, resolvedServers, isFirstDeploy) {
+// writeMeta: whether to write our bookkeeping keys (_managedBy, _preSupercopilotBackup) into the
+// config file itself. True for the Copilot CLI config (its own tolerant format, confirmed to
+// ignore unknown keys). FALSE for the VS Code / JetBrains mcp.json files: those are consumed by
+// IDE tooling that may validate against a strict schema disallowing additional top-level
+// properties, in which case a stray _managedBy would make every MCP server silently fail to load.
+// For those, only the `servers` key is written; ownership is tracked in .supercopilot-manifest.json
+// instead (uninstall already falls back to the manifest's serverKeys when _managedBy is absent),
+// and any first-deploy collision backup rides along in this function's return value (recorded in
+// the manifest by writeManifest) rather than being injected into the file.
+function mergeManagedServers(configPath, serversKey, resolvedServers, isFirstDeploy, writeMeta = true) {
   let existing = {};
   if (fs.existsSync(configPath)) {
     try {
@@ -250,24 +259,30 @@ function mergeManagedServers(configPath, serversKey, resolvedServers, isFirstDep
   }
   existing[serversKey] = existing[serversKey] || {};
   const managedKeys = Object.keys(resolvedServers);
+  const preBackup = {};
   for (const key of managedKeys) {
     const current = existing[serversKey][key];
     if (isFirstDeploy && current !== undefined && !deepEqual(current, resolvedServers[key])) {
-      existing._preSupercopilotBackup = existing._preSupercopilotBackup || {};
-      existing._preSupercopilotBackup[key] = current;
+      preBackup[key] = current;
+      if (writeMeta) {
+        existing._preSupercopilotBackup = existing._preSupercopilotBackup || {};
+        existing._preSupercopilotBackup[key] = current;
+      }
       console.warn(
         `  WARNING: ${configPath} already had a differently-configured "${key}" server before this install -- ` +
-          `its original value was preserved under _preSupercopilotBackup.${key} rather than discarded. Restore it by hand if you need it back.`
+          `its original value was preserved under ${writeMeta ? `_preSupercopilotBackup.${key}` : 'the deploy manifest'} rather than discarded. Restore it by hand if you need it back.`
       );
     }
     existing[serversKey][key] = resolvedServers[key];
   }
-  existing._managedBy = existing._managedBy || {};
-  existing._managedBy.supercopilot = managedKeys;
+  if (writeMeta) {
+    existing._managedBy = existing._managedBy || {};
+    existing._managedBy.supercopilot = managedKeys;
+  }
 
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(existing, null, 2) + '\n');
-  return { path: configPath, serverKeys: managedKeys, entries: resolvedServers };
+  return { path: configPath, serverKeys: managedKeys, entries: resolvedServers, preBackup: Object.keys(preBackup).length ? preBackup : undefined };
 }
 
 function deployMcpConfigs(globalMemoryServerDir, isFirstDeploy) {
@@ -305,8 +320,8 @@ function deployMcpConfigs(globalMemoryServerDir, isFirstDeploy) {
   const foundVsCodeDir = vsCodeUserDirs.find((d) => fs.existsSync(d));
   if (foundVsCodeDir) {
     const vsCodeConfigPath = path.join(foundVsCodeDir, 'mcp.json');
-    result.vscode = mergeManagedServers(vsCodeConfigPath, 'servers', resolvedServers, isFirstDeploy);
-    console.log(`mcp (VS Code) -> ${vsCodeConfigPath}  (found and written; merged with any pre-existing entries)`);
+    result.vscode = mergeManagedServers(vsCodeConfigPath, 'servers', resolvedServers, isFirstDeploy, false);
+    console.log(`mcp (VS Code) -> ${vsCodeConfigPath}  (found and written; only the servers key, no bookkeeping keys; merged with any pre-existing entries)`);
   } else {
     console.log(
       `mcp (VS Code) -> NOT WRITTEN. No VS Code user-data folder found on this machine (checked: ${vsCodeUserDirs.join(', ')}). ` +
@@ -318,8 +333,8 @@ function deployMcpConfigs(globalMemoryServerDir, isFirstDeploy) {
   // JetBrains -- global path is documented as ~/.config/github-copilot/intellij/mcp.json,
   // consistent across platforms in what's documented (not OS-conditional the way VS Code's is).
   const jetbrainsConfigPath = path.join(HOME, '.config', 'github-copilot', 'intellij', 'mcp.json');
-  result.jetbrains = mergeManagedServers(jetbrainsConfigPath, 'servers', resolvedServers, isFirstDeploy);
-  console.log(`mcp (JetBrains) -> ${jetbrainsConfigPath}  (written per documentation; merged with any pre-existing entries; not yet hands-on confirmed in a real IDE, see TESTING.md)`);
+  result.jetbrains = mergeManagedServers(jetbrainsConfigPath, 'servers', resolvedServers, isFirstDeploy, false);
+  console.log(`mcp (JetBrains) -> ${jetbrainsConfigPath}  (written per documentation; only the servers key, no bookkeeping keys; merged with any pre-existing entries; not yet hands-on confirmed in a real IDE, see TESTING.md)`);
 
   return result;
 }
