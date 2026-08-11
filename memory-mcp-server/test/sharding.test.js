@@ -9,13 +9,22 @@ import path from 'node:path';
 
 let tmpDir;
 
+let prevMaintenanceInterval;
+
 before(async () => {
   tmpDir = await mkdtemp(path.join(tmpdir(), 'memory-sharding-test-'));
   process.env.COPILOT_MEMORY_DIR = tmpDir;
+  // These tests share one store and call loadDigest across several tests, each expecting
+  // prune/eviction to run. Disable the once/day maintenance throttle so every loadDigest performs
+  // maintenance (the throttle itself is covered in store-lifecycle-fixes.test.js).
+  prevMaintenanceInterval = process.env.COPILOT_MEMORY_MAINTENANCE_MIN_INTERVAL_MS;
+  process.env.COPILOT_MEMORY_MAINTENANCE_MIN_INTERVAL_MS = '0';
 });
 
 after(async () => {
   await rm(tmpDir, { recursive: true, force: true });
+  if (prevMaintenanceInterval === undefined) delete process.env.COPILOT_MEMORY_MAINTENANCE_MIN_INTERVAL_MS;
+  else process.env.COPILOT_MEMORY_MAINTENANCE_MIN_INTERVAL_MS = prevMaintenanceInterval;
 });
 
 test('project-scoped writes land in their own shard, not global.json', async () => {

@@ -43,6 +43,8 @@ const ARCHIVE_DIR = path.join(STORE_DIR, 'archive');
 const GLOBAL_OVERFLOW_LOG = path.join(ARCHIVE_DIR, 'global-overflow.jsonl');
 const SESSIONS_DIR = path.join(STORE_DIR, 'sessions');
 const LAST_WRITE_MARKER = path.join(STORE_DIR, '.last-write-at');
+const MAINTENANCE_MARKER = path.join(STORE_DIR, '.last-maintenance-at');
+const DEFAULT_MAINTENANCE_MIN_INTERVAL_MS = 24 * 60 * 60 * 1000; // run lifecycle maintenance at most once/day
 const SESSION_MARKER_STALE_MS = 24 * 60 * 60 * 1000;
 const NUDGED_DIR = path.join(STORE_DIR, '.nudged');
 const NUDGE_STALE_MS = 24 * 60 * 60 * 1000;
@@ -204,6 +206,14 @@ function readConfigInt(entries, key, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+// config/* entries are control data (the nudge off-switch, cap/purge overrides), not user
+// memories. They must never count toward the global cap or be eligible for LRU eviction --
+// otherwise accumulating 50+ real memories would silently evict a user's explicit settings back
+// to defaults (they're never re-read/re-updated, so they always rank as least-recently-used).
+function isConfigKey(key) {
+  return key.startsWith('config/');
+}
+
 // ---- Serialization (in-process ordering only -- see file header for what this does and doesn't
 // protect against) ----
 
@@ -265,6 +275,14 @@ export async function readMemory(key, opts = {}) {
       const data = scope === 'project' ? await readProjectShard(project) : await readGlobalShard();
       const entry = data.entries[key];
       if (!entry) return { key, found: false, value: null };
+      // Record the read so LRU eviction ("least-recently-read") is actually accurate. Without
+      // this, an old-but-frequently-read entry keeps a stale lastReadAt and gets evicted despite
+      // being read every session. A deliberate, small write on the read path -- cheap for a local
+      // file store, and correctness of eviction is worth more than avoiding the write.
+      const now = new Date().toISOString();
+      entry.lastReadAt = now;
+      if (scope === 'project' && data._meta) data._meta.lastTouchedAt = now;
+      await atomicWriteJSON(filePath, data);
       return { key, found: true, value: entry.value, updatedAt: entry.updatedAt };
     })
   );
@@ -335,35 +353,53 @@ export async function listMemoriesWithValues(opts = {}) {
 // ---- Lifecycle maintenance (DESIGN.md §11e) -- runs opportunistically inside loadDigest(), no
 // separate cron/schedule infrastructure needed. Two independent jobs. ----
 
+function isExpired(data, cutoff) {
+  const lastTouched = data?._meta?.lastTouchedAt ? Date.parse(data._meta.lastTouchedAt) : null;
+  return lastTouched !== null && lastTouched < cutoff;
+}
+
 async function pruneExpiredProjectShards(purgeDays) {
   if (!existsSync(PROJECTS_DIR)) return;
   const cutoff = Date.now() - purgeDays * 24 * 60 * 60 * 1000;
   for (const file of await readdir(PROJECTS_DIR)) {
     if (!file.endsWith('.json')) continue;
     const filePath = path.join(PROJECTS_DIR, file);
-    const data = await readJSON(filePath, null);
-    const lastTouched = data?._meta?.lastTouchedAt ? Date.parse(data._meta.lastTouchedAt) : null;
-    if (lastTouched !== null && lastTouched < cutoff) {
-      // Decided, not a conservative default: hard delete, no archive (DESIGN.md §11e).
-      await rm(filePath, { force: true });
-    }
+    // Cheap unlocked pre-check so we don't take a lock on every shard every run -- only shards
+    // that LOOK expired proceed to the locked, authoritative re-check below.
+    const pre = await readJSON(filePath, null);
+    if (!isExpired(pre, cutoff)) continue;
+    // Re-read and re-verify UNDER the shard lock before deleting. Without this, an unlocked rm()
+    // races a concurrent locked writeMemory() to the same shard: the write bumps lastTouchedAt and
+    // persists a new entry, then our stale rm() deletes it -- a lost update, the exact thing the
+    // lock exists to prevent. Under the lock, a write that landed first shows a fresh
+    // lastTouchedAt (so we skip); a write that lands after simply recreates the shard from empty
+    // (so its data survives either way).
+    await withFileLock(filePath, async () => {
+      const data = await readJSON(filePath, null);
+      if (data && isExpired(data, cutoff)) {
+        // Decided, not a conservative default: hard delete, no archive (DESIGN.md §11e).
+        await rm(filePath, { force: true });
+      }
+    });
   }
 }
 
 async function evictGlobalOverflow(cap) {
   return withFileLock(GLOBAL_FILE, async () => {
     const data = await readGlobalShard();
-    const keys = Object.keys(data.entries);
-    if (keys.length <= cap) return;
+    // Only real user memories count toward the cap and can be evicted -- config/* control entries
+    // are never candidates (see isConfigKey).
+    const evictableKeys = Object.keys(data.entries).filter((key) => !isConfigKey(key));
+    if (evictableKeys.length <= cap) return;
 
-    const ranked = keys
+    const ranked = evictableKeys
       .map((key) => ({ key, ...data.entries[key] }))
       .sort((a, b) => {
         const aRead = a.lastReadAt || a.updatedAt;
         const bRead = b.lastReadAt || b.updatedAt;
         return aRead < bRead ? -1 : aRead > bRead ? 1 : 0; // least-recently-read first
       });
-    const evicted = ranked.slice(0, keys.length - cap);
+    const evicted = ranked.slice(0, evictableKeys.length - cap);
 
     await mkdir(ARCHIVE_DIR, { recursive: true });
     const lines = evicted.map((e) =>
@@ -374,6 +410,36 @@ async function evictGlobalOverflow(cap) {
     for (const e of evicted) delete data.entries[e.key];
     await atomicWriteJSON(GLOBAL_FILE, data);
   });
+}
+
+// Lifecycle maintenance (prune + evict) is opportunistic but must not run on EVERY sessionStart:
+// every new Copilot session spawns a fresh process that calls loadDigest once, and pruning reads
+// and JSON-parses every project shard, so unthrottled it adds O(number-of-repos) blocking I/O to
+// the session-start hot path that gates additionalContext delivery. A cross-process timestamp
+// marker caps it at once/day (overridable via COPILOT_MEMORY_MAINTENANCE_MIN_INTERVAL_MS -- tests
+// set 0 to force it every call).
+function maintenanceMinIntervalMs() {
+  const raw = process.env.COPILOT_MEMORY_MAINTENANCE_MIN_INTERVAL_MS;
+  const n = raw !== undefined ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAINTENANCE_MIN_INTERVAL_MS;
+}
+
+async function shouldRunMaintenance() {
+  const interval = maintenanceMinIntervalMs();
+  if (interval === 0) return true;
+  if (!existsSync(MAINTENANCE_MARKER)) return true;
+  try {
+    const last = Date.parse((await readFile(MAINTENANCE_MARKER, 'utf8')).trim());
+    if (!Number.isFinite(last)) return true;
+    return Date.now() - last >= interval;
+  } catch {
+    return true;
+  }
+}
+
+async function recordMaintenanceRun() {
+  await mkdir(STORE_DIR, { recursive: true });
+  await writeFile(MAINTENANCE_MARKER, new Date().toISOString(), 'utf8').catch(() => {});
 }
 
 // Builds the sessionStart digest: global entries + the current project's entries, most recently
@@ -387,8 +453,11 @@ export async function loadDigest({ cwd, maxEntries = 20 } = {}) {
   const purgeDays = readConfigInt(globalData.entries, 'config/project-purge-days', DEFAULT_PROJECT_PURGE_DAYS);
   const globalCap = readConfigInt(globalData.entries, 'config/global-cap', DEFAULT_GLOBAL_CAP);
 
-  await pruneExpiredProjectShards(purgeDays);
-  await evictGlobalOverflow(globalCap);
+  if (await shouldRunMaintenance()) {
+    await pruneExpiredProjectShards(purgeDays);
+    await evictGlobalOverflow(globalCap);
+    await recordMaintenanceRun();
+  }
 
   const projectId = cwd ? resolveProjectId(cwd) : null;
   const freshGlobal = await readGlobalShard();
