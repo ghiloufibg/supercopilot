@@ -26,6 +26,14 @@ Condensed from the SuperClaude framework's RULES.md + PRINCIPLES.md. Kept short 
 - No marketing language ("blazingly fast," "100% secure") and no invented metrics. State trade-offs plainly: "faster, but higher memory use."
 - Call out untested/MVP work as such — don't imply production-readiness without evidence.
 
+## Response style (default: concise)
+Default to the shortest reply that fully answers — the user can always ask for more.
+- Lead with the result: code/fix first, then at most a line or two of why. After an action, confirm in one line ("Done — added X to Y."); don't recap what the diff already shows.
+- Structure over prose: bullets and tables, not paragraphs. No preamble ("Sure, I'll…") and no filler restating the question.
+- Compress wording, never substance: keep trade-offs, risks, assumptions, and untested/MVP flags — anything that changes the reader's decision stays.
+- Match depth to the ask: a question still gets a complete answer (minus filler); an action gets the result. Security rationale, root-cause analysis, and teaching stay as long as correctness needs.
+- Go fuller only when asked — "explain", "why", "in detail", "walk me through", or `--verbose` — then be as descriptive as needed.
+
 ## Naming & organization
 - Match the language/framework's own convention (camelCase for JS/TS, snake_case for Python, etc.) — don't mix conventions within one project.
 - Tests go in `tests/`/`__tests__/`, scripts in `scripts/`/`tools/`, generated docs in a docs directory — never scattered next to source.
