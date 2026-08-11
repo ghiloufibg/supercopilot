@@ -69,6 +69,17 @@ test('read_memory records lastReadAt', async () => {
   assert.notEqual(g.entries['k'].lastReadAt, null, 'read_memory should stamp lastReadAt');
 });
 
+test('a second read within the throttle window does not rewrite the shard', async () => {
+  await store.writeMemory('k', 'v');
+  await store.readMemory('k'); // first read stamps lastReadAt
+  const t1 = (await readGlobal()).entries['k'].lastReadAt;
+  assert.notEqual(t1, null);
+
+  await store.readMemory('k'); // within 1h -> throttled, no restamp
+  const t2 = (await readGlobal()).entries['k'].lastReadAt;
+  assert.equal(t2, t1, 'lastReadAt should not be rewritten by a read within the throttle window');
+});
+
 test('a frequently-read but not-recently-updated entry survives LRU eviction', async () => {
   await store.writeMemory('config/global-cap', '2');
   await store.writeMemory('old', 'v'); // oldest updatedAt

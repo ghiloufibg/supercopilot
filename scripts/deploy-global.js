@@ -13,6 +13,11 @@ const { execFileSync } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const HOME = os.homedir();
 const COPILOT_HOME = process.env.COPILOT_HOME || path.join(HOME, '.copilot');
+// Durable, first-deploy-only record of any pre-existing IDE MCP server we overwrote. Kept here,
+// NOT in the manifest (which uninstall deletes on success) and NOT inside the IDE mcp.json itself
+// (strict schemas may reject unknown keys -- the reason IDE configs get writeMeta=false). Uninstall
+// never touches this file, so the warning's "restore it by hand" promise stays true.
+const PREINSTALL_MCP_BACKUP = path.join(COPILOT_HOME, 'supercopilot-preinstall-mcp-backup.json');
 
 // TOOLS-DESIGN.md -- Jira/Confluence/GitLab read-only script tools, installed separately from
 // the plugin itself via --all or --tool=jira,confluence,gitlab, opt-in (not part of the
@@ -270,7 +275,7 @@ function mergeManagedServers(configPath, serversKey, resolvedServers, isFirstDep
       }
       console.warn(
         `  WARNING: ${configPath} already had a differently-configured "${key}" server before this install -- ` +
-          `its original value was preserved under ${writeMeta ? `_preSupercopilotBackup.${key}` : 'the deploy manifest'} rather than discarded. Restore it by hand if you need it back.`
+          `its original value was preserved under ${writeMeta ? `_preSupercopilotBackup.${key} in that file` : PREINSTALL_MCP_BACKUP} rather than discarded. Restore it by hand if you need it back.`
       );
     }
     existing[serversKey][key] = resolvedServers[key];
@@ -335,6 +340,17 @@ function deployMcpConfigs(globalMemoryServerDir, isFirstDeploy) {
   const jetbrainsConfigPath = path.join(HOME, '.config', 'github-copilot', 'intellij', 'mcp.json');
   result.jetbrains = mergeManagedServers(jetbrainsConfigPath, 'servers', resolvedServers, isFirstDeploy, false);
   console.log(`mcp (JetBrains) -> ${jetbrainsConfigPath}  (written per documentation; only the servers key, no bookkeeping keys; merged with any pre-existing entries; not yet hands-on confirmed in a real IDE, see TESTING.md)`);
+
+  // IDE surfaces (writeMeta=false) can't stash a collision backup in their own file, so persist any
+  // to a durable sidecar uninstall won't delete -- keeping the "restore it by hand" warning honest.
+  const ideBackups = {};
+  if (result.vscode?.preBackup) ideBackups.vscode = { path: result.vscode.path, servers: result.vscode.preBackup };
+  if (result.jetbrains?.preBackup) ideBackups.jetbrains = { path: result.jetbrains.path, servers: result.jetbrains.preBackup };
+  if (Object.keys(ideBackups).length > 0) {
+    fs.mkdirSync(COPILOT_HOME, { recursive: true });
+    fs.writeFileSync(PREINSTALL_MCP_BACKUP, JSON.stringify({ backedUpAt: new Date().toISOString(), ...ideBackups }, null, 2) + '\n');
+    console.log(`mcp backup  -> ${PREINSTALL_MCP_BACKUP}  (pre-existing IDE server config(s) we overwrote on first deploy; survives uninstall)`);
+  }
 
   return result;
 }

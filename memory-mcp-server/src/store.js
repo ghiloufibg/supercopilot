@@ -45,6 +45,7 @@ const SESSIONS_DIR = path.join(STORE_DIR, 'sessions');
 const LAST_WRITE_MARKER = path.join(STORE_DIR, '.last-write-at');
 const MAINTENANCE_MARKER = path.join(STORE_DIR, '.last-maintenance-at');
 const DEFAULT_MAINTENANCE_MIN_INTERVAL_MS = 24 * 60 * 60 * 1000; // run lifecycle maintenance at most once/day
+const READ_STAMP_THROTTLE_MS = 60 * 60 * 1000; // re-stamp lastReadAt on read at most once/hour per entry
 const SESSION_MARKER_STALE_MS = 24 * 60 * 60 * 1000;
 const NUDGED_DIR = path.join(STORE_DIR, '.nudged');
 const NUDGE_STALE_MS = 24 * 60 * 60 * 1000;
@@ -275,14 +276,26 @@ export async function readMemory(key, opts = {}) {
       const data = scope === 'project' ? await readProjectShard(project) : await readGlobalShard();
       const entry = data.entries[key];
       if (!entry) return { key, found: false, value: null };
-      // Record the read so LRU eviction ("least-recently-read") is actually accurate. Without
-      // this, an old-but-frequently-read entry keeps a stale lastReadAt and gets evicted despite
-      // being read every session. A deliberate, small write on the read path -- cheap for a local
-      // file store, and correctness of eviction is worth more than avoiding the write.
-      const now = new Date().toISOString();
-      entry.lastReadAt = now;
-      if (scope === 'project' && data._meta) data._meta.lastTouchedAt = now;
-      await atomicWriteJSON(filePath, data);
+      // Record the read so LRU eviction ("least-recently-read") is actually accurate: without it,
+      // an old-but-frequently-read entry keeps a stale lastReadAt and gets evicted despite being
+      // read every session. Two guards keep this cheap and safe on the read path:
+      //   - Throttled: skip the rewrite entirely if lastReadAt is already fresh (< 1h), so a
+      //     read-heavy session doesn't rewrite the shard on every call. Eviction only needs
+      //     coarse recency, so an hour's resolution is plenty.
+      //   - Best-effort: a failed bookkeeping write (read-only fs, ENOSPC, lock timeout) must NOT
+      //     fail an otherwise-successful read -- swallow it, same posture as the LAST_WRITE_MARKER
+      //     write in writeMemory and readJSON's corrupt-file fallback.
+      const lastRead = entry.lastReadAt ? Date.parse(entry.lastReadAt) : 0;
+      if (!Number.isFinite(lastRead) || Date.now() - lastRead >= READ_STAMP_THROTTLE_MS) {
+        const now = new Date().toISOString();
+        entry.lastReadAt = now;
+        if (scope === 'project' && data._meta) data._meta.lastTouchedAt = now;
+        try {
+          await atomicWriteJSON(filePath, data);
+        } catch {
+          /* best-effort: never fail a read because its lastReadAt bookkeeping couldn't be persisted */
+        }
+      }
       return { key, found: true, value: entry.value, updatedAt: entry.updatedAt };
     })
   );
@@ -443,9 +456,9 @@ async function recordMaintenanceRun() {
 }
 
 // Builds the sessionStart digest: global entries + the current project's entries, most recently
-// updated first, with opportunistic pruning/eviction folded in (DESIGN.md §11e/§11d). Marks
-// lastReadAt only for entries actually surfaced here, not on ordinary read_memory calls, to avoid
-// write-amplifying a read-heavy path.
+// updated first, with opportunistic pruning/eviction folded in (DESIGN.md §11e/§11d). Refreshes
+// lastReadAt for the entries it surfaces here; ordinary read_memory calls also stamp lastReadAt,
+// but throttled (see READ_STAMP_THROTTLE_MS) so a read-heavy path isn't write-amplified.
 export async function loadDigest({ cwd, maxEntries = 20 } = {}) {
   await ensureMigrated();
 
@@ -454,8 +467,16 @@ export async function loadDigest({ cwd, maxEntries = 20 } = {}) {
   const globalCap = readConfigInt(globalData.entries, 'config/global-cap', DEFAULT_GLOBAL_CAP);
 
   if (await shouldRunMaintenance()) {
-    await pruneExpiredProjectShards(purgeDays);
-    await evictGlobalOverflow(globalCap);
+    // Maintenance is opportunistic -- a transient lock timeout or fs error on one stale shard must
+    // never reject loadDigest and suppress the whole sessionStart auto-load (bin/memory-hook.js
+    // would then emit no additionalContext at all). Record the run regardless so a persistent
+    // failure doesn't retry on every single session.
+    try {
+      await pruneExpiredProjectShards(purgeDays);
+      await evictGlobalOverflow(globalCap);
+    } catch {
+      /* opportunistic maintenance -- swallow so the digest below is still delivered */
+    }
     await recordMaintenanceRun();
   }
 
