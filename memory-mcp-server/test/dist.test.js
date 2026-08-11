@@ -74,7 +74,7 @@ test('the bundle starts with no node_modules and reports its alpha version', () 
   const responses = driveServer([INIT]);
   const init = responses.find((r) => r.id === 1);
   assert.equal(init.result.serverInfo.name, 'copilot-superclaude-memory');
-  assert.equal(init.result.serverInfo.version, '0.1.0-alpha.1');
+  assert.equal(init.result.serverInfo.version, '0.1.0-alpha.2');
 });
 
 test('the bundle exposes exactly the four memory tools', () => {
