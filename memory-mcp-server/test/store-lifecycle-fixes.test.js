@@ -80,6 +80,17 @@ test('a second read within the throttle window does not rewrite the shard', asyn
   assert.equal(t2, t1, 'lastReadAt should not be rewritten by a read within the throttle window');
 });
 
+test('a future-dated lastReadAt (clock skew) is corrected on read, not frozen', async () => {
+  await store.writeMemory('k', 'v');
+  const g = await readGlobal();
+  g.entries['k'].lastReadAt = new Date(Date.now() + 5 * 60 * 60 * 1000).toISOString(); // 5h in the future
+  await writeFile(path.join(tmpDir, 'global.json'), JSON.stringify(g));
+
+  await store.readMemory('k'); // must re-stamp despite the future timestamp, not skip forever
+  const after = (await readGlobal()).entries['k'].lastReadAt;
+  assert.ok(Date.parse(after) <= Date.now() + 1000, 'a future lastReadAt should be corrected to ~now on read');
+});
+
 test('a frequently-read but not-recently-updated entry survives LRU eviction', async () => {
   await store.writeMemory('config/global-cap', '2');
   await store.writeMemory('old', 'v'); // oldest updatedAt

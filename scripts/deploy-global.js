@@ -347,9 +347,18 @@ function deployMcpConfigs(globalMemoryServerDir, isFirstDeploy) {
   if (result.vscode?.preBackup) ideBackups.vscode = { path: result.vscode.path, servers: result.vscode.preBackup };
   if (result.jetbrains?.preBackup) ideBackups.jetbrains = { path: result.jetbrains.path, servers: result.jetbrains.preBackup };
   if (Object.keys(ideBackups).length > 0) {
-    fs.mkdirSync(COPILOT_HOME, { recursive: true });
-    fs.writeFileSync(PREINSTALL_MCP_BACKUP, JSON.stringify({ backedUpAt: new Date().toISOString(), ...ideBackups }, null, 2) + '\n');
-    console.log(`mcp backup  -> ${PREINSTALL_MCP_BACKUP}  (pre-existing IDE server config(s) we overwrote on first deploy; survives uninstall)`);
+    // Never overwrite an existing sidecar: it holds the ORIGINAL pre-install config from the very
+    // first collision. A later reinstall (uninstall clears the manifest, so isFirstDeploy is true
+    // again) can re-detect a collision against a now-drifted value -- writing that over the sidecar
+    // would destroy the genuine original the file promises to preserve. Same "created once, never
+    // clobbered" rule as tools/.env.
+    if (!fs.existsSync(PREINSTALL_MCP_BACKUP)) {
+      fs.mkdirSync(COPILOT_HOME, { recursive: true });
+      fs.writeFileSync(PREINSTALL_MCP_BACKUP, JSON.stringify({ backedUpAt: new Date().toISOString(), ...ideBackups }, null, 2) + '\n');
+      console.log(`mcp backup  -> ${PREINSTALL_MCP_BACKUP}  (pre-existing IDE server config(s) we overwrote on first deploy; survives uninstall)`);
+    } else {
+      console.log(`mcp backup  -> ${PREINSTALL_MCP_BACKUP} already exists from an earlier install -- left untouched to preserve the original pre-install config`);
+    }
   }
 
   return result;

@@ -114,8 +114,16 @@ async function withFileLock(filePath, fn) {
 async function atomicWriteJSON(filePath, data) {
   await mkdir(path.dirname(filePath), { recursive: true });
   const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  await writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf8');
-  await rename(tmpPath, filePath);
+  try {
+    await writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf8');
+    await rename(tmpPath, filePath);
+  } catch (err) {
+    // Don't leave an orphan temp file behind if the write or rename fails (e.g. ENOSPC after the
+    // temp write). Callers that swallow write failures (the best-effort read-stamp) would otherwise
+    // strew uncollected <shard>.tmp-* files on a degraded filesystem.
+    await rm(tmpPath, { force: true }).catch(() => {});
+    throw err;
+  }
 }
 
 async function readJSON(filePath, fallback) {
@@ -286,7 +294,11 @@ export async function readMemory(key, opts = {}) {
       //     fail an otherwise-successful read -- swallow it, same posture as the LAST_WRITE_MARKER
       //     write in writeMemory and readJSON's corrupt-file fallback.
       const lastRead = entry.lastReadAt ? Date.parse(entry.lastReadAt) : 0;
-      if (!Number.isFinite(lastRead) || Date.now() - lastRead >= READ_STAMP_THROTTLE_MS) {
+      const readAge = Date.now() - lastRead;
+      // Re-stamp when the timestamp is unparseable, older than the throttle window, OR in the
+      // future (readAge < 0) -- a future lastReadAt from clock skew on a synced home directory would
+      // otherwise keep readAge negative forever and freeze this entry's recency.
+      if (!Number.isFinite(lastRead) || readAge >= READ_STAMP_THROTTLE_MS || readAge < 0) {
         const now = new Date().toISOString();
         entry.lastReadAt = now;
         if (scope === 'project' && data._meta) data._meta.lastTouchedAt = now;
@@ -469,15 +481,17 @@ export async function loadDigest({ cwd, maxEntries = 20 } = {}) {
   if (await shouldRunMaintenance()) {
     // Maintenance is opportunistic -- a transient lock timeout or fs error on one stale shard must
     // never reject loadDigest and suppress the whole sessionStart auto-load (bin/memory-hook.js
-    // would then emit no additionalContext at all). Record the run regardless so a persistent
-    // failure doesn't retry on every single session.
+    // would then emit no additionalContext at all). The throttle marker is stamped ONLY on success:
+    // if maintenance keeps throwing, we keep retrying next session (and keep enforcing the global
+    // cap) rather than stamping the marker and silently disabling eviction/purge for a full day.
     try {
       await pruneExpiredProjectShards(purgeDays);
       await evictGlobalOverflow(globalCap);
+      await recordMaintenanceRun();
     } catch {
-      /* opportunistic maintenance -- swallow so the digest below is still delivered */
+      /* opportunistic maintenance -- swallow so the digest below is still delivered; leave the
+         marker unstamped so the next session retries */
     }
-    await recordMaintenanceRun();
   }
 
   const projectId = cwd ? resolveProjectId(cwd) : null;
