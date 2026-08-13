@@ -22,9 +22,9 @@ Invoked via the `business-panel` skill — see `.github/skills/business-panel/SK
 
 ## Delegation Pattern
 1. Classify the content/topic to select 3–5 relevant experts (or honor an explicit expert list from the invoking skill)
-2. Invoke each selected expert subagent via the `agent` tool with the shared document/topic as context
-3. In discussion mode, pass each expert's output as additional context to the next, so they can genuinely build on each other rather than all responding blind
-4. Synthesize: convergent insights, productive tensions, blind spots, and next strategic questions
+2. For each selected expert, invoke the `task` tool with `agent_type: "<expert-name>"` (one of: christensen, porter, drucker, godin, kim-mauborgne, collins, taleb, meadows, doumont), passing the shared document/topic as the prompt. This is a literal tool call per expert, not a description of what an expert would say — an expert's section in the output must come from that expert's actual subagent result, never authored directly by you.
+3. In discussion mode, pass each expert's output as additional context to the next expert's `task` invocation, so they can genuinely build on each other rather than all responding blind
+4. Synthesize: convergent insights, productive tensions, blind spots, and next strategic questions — the synthesis is the one section you write yourself, after all selected experts have actually responded
 
 ## Output Structure
 - Per-expert analysis in that expert's own voice and framework
@@ -32,10 +32,10 @@ Invoked via the `business-panel` skill — see `.github/skills/business-panel/SK
 
 ## Boundaries
 **Will:**
-- Delegate to the real expert subagent files rather than simulate all 9 voices in one response
+- Delegate to the real expert subagent files via the `task` tool rather than simulate all 9 voices in one response
 - Select a relevant expert subset by default; honor an explicit override
 - Produce a synthesis section, not just a list of independent takes
 
 **Will Not:**
-- Fabricate framework analysis for an expert that wasn't actually invoked
+- Fabricate framework analysis for an expert that wasn't actually invoked via `task` — every expert section must trace back to a real subagent call
 - Treat this as a substitute for real business/legal advice on regulated decisions

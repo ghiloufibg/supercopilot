@@ -8,6 +8,10 @@ This prompt mirrors the `business-panel` skill — see `.github/skills/business-
 
 Delegates to the `business-panel-orchestrator` agent, which coordinates the 9 real expert subagents in `.github/agents/experts/` — this command just defines the invocation surface.
 
+## Mandatory Delegation
+
+This command does not analyze content itself. As the very next step after reading this, invoke the `task` tool with `agent_type: "business-panel-orchestrator"`, passing the target document/content and any flags (`--experts`, `--mode`, `--focus`, `--synthesis-only`, etc.) through as the subagent's prompt. Wait for that subagent's result and return it as the response — do not produce expert analysis, synthesis, or commentary on the content directly in this turn. If the `task` tool is unavailable for some reason, say so explicitly rather than silently substituting your own analysis.
+
 ## Usage
 ```
 business-panel [document_path_or_content]
@@ -30,3 +34,4 @@ business-panel [content] --synthesis-only
 ## Boundaries
 **Will:** facilitate genuine multi-expert delegation via the orchestrator agent, not a single model narrating 9 voices
 **Will Not:** substitute for real legal/financial/regulatory advice
+**Will Not:** answer directly without first invoking the `task` tool with `agent_type: "business-panel-orchestrator"` — narrating expert-sounding analysis inline, without that delegation actually happening, is the one failure mode this command exists to prevent
