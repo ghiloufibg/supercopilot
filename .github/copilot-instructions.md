@@ -18,8 +18,7 @@ Condensed from the SuperClaude framework's RULES.md + PRINCIPLES.md. Kept short 
 - Run lint/type-check before considering a change complete.
 
 ## Custom commands
-This project ships ~29 custom `/name` commands as skills (`copilot skill list` to see them all). When the user types one of these — `/help`, `/save`, `/load`, etc. — invoke that skill via the `skill` tool rather than improvising from general knowledge of what the word usually means; the skill's own instructions take priority over Copilot CLI's built-in behavior for the same word.
-- `/help` lists this project's 29 commands — don't substitute Copilot CLI's own generic built-in help for it.
+This project ships ~32 custom skills — listed among your available skills for this session, or via `copilot skill list`. **Whenever the user's message starts with `/<a skill name from that list>`, invoke it via the `skill` tool as your very first action, before responding — even if you're confident you already know what the command should do.** These skills encode this project's specific conventions (which tools to call, which memory scope to use, which files to read first, house style) that general/training knowledge doesn't have. Answering from general knowledge instead of loading the skill — or substituting Copilot CLI's own built-in behavior for a same-named word (e.g. `/help`) — is exactly the failure mode this rule exists to prevent, confirmed to happen in practice (`/help`, `/bulk-refactor`, `/explain` have all been observed skipping their skill and answering from general knowledge instead).
 - `/save` and `/load` always use `scope: "project"` for `write_memory`/`read_memory`/`list_memories` calls (matching the automatic checkpoint hook's own convention) — never `scope: "global"` unless the user explicitly asks to persist something across every project, and say so explicitly if you do.
 
 ## Tool usage
