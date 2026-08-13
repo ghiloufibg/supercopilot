@@ -147,6 +147,13 @@ function installMemoryServer() {
     process.exit(1);
   }
 
+  // Wipe any previous install before writing the new one. This directory is exclusively owned by
+  // this deploy script -- the server's actual runtime data lives separately, at
+  // ~/.copilot/memory-data/, untouched by this -- so a clean rebuild is safe. Without it, a prior
+  // pre-bundle deploy's real node_modules/ + package-lock.json (or any other future leftover)
+  // persists forever: dead weight that quietly contradicts the "install-free" bundle deployed below.
+  fs.rmSync(destDir, { recursive: true, force: true });
+
   // dist/index.js is the deployed server, placed at the src/index.js path the MCP config expects.
   copyFile(bundlePath, path.join(destDir, 'src', 'index.js'));
   // store.js stays a plain, single source of truth -- shared by the server bundle (imports it as
@@ -451,12 +458,47 @@ function deployTools(requestedTools) {
 // Written last, after everything else has actually happened, so it reflects ground truth rather
 // than intent. Deleted again by uninstall-global.js on a successful run (§8: "its only purpose is
 // enabling uninstall").
+// Best-effort only -- git may not be installed, or ROOT may not be a git checkout (e.g. deploying
+// from a downloaded zip). Returns null rather than throwing; every caller treats that as "unknown."
+function getCurrentGitCommit() {
+  try {
+    const hash = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim();
+    const dirty = execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().trim().length > 0;
+    return dirty ? `${hash}-dirty` : hash;
+  } catch {
+    return null;
+  }
+}
+
+// Surfaces how stale the *previous* deploy was, right before this run overwrites it -- otherwise
+// a machine can silently run a build that's weeks behind the repo with nothing ever pointing that
+// out (this is exactly how the memory server's old pre-bundle install went undetected for a month
+// on a real test machine). Purely informational -- never blocks the deploy.
+function logStaleness(manifestPath, currentCommit) {
+  if (!fs.existsSync(manifestPath)) return;
+  try {
+    const prev = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const ageMs = prev.deployedAt ? Date.now() - new Date(prev.deployedAt).getTime() : null;
+    const days = ageMs === null ? null : Math.round(ageMs / 86400000);
+    const ageStr = days === null ? 'unknown age' : days === 0 ? 'earlier today' : `${days} day${days === 1 ? '' : 's'} ago`;
+    const commitStr = prev.deployedFromCommit ? ` from commit ${prev.deployedFromCommit}` : '';
+    const nowStr = currentCommit ? ` (deploying commit ${currentCommit} now)` : '';
+    console.log(`Previous deploy: ${ageStr}${commitStr}${nowStr}.`);
+  } catch {
+    console.log(`Previous deploy: manifest present but unreadable -- proceeding with a fresh deploy.`);
+  }
+}
+
 function writeManifest(data) {
   const manifestPath = path.join(COPILOT_HOME, '.supercopilot-manifest.json');
   const pkgVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
   const manifest = {
     version: pkgVersion,
     deployedAt: new Date().toISOString(),
+    deployedFromCommit: getCurrentGitCommit(),
     skills: data.skills,
     agents: data.agents,
     instructionsFile: data.instructionsFile,
@@ -477,7 +519,9 @@ const requestedTools = parseRequestedTools(process.argv.slice(2));
 // Checked before anything runs, since deploySkills() etc. don't touch this file -- only
 // writeManifest() does, at the very end. "First deploy" means no manifest yet, i.e. this plugin
 // has never successfully deployed here before (fresh install, or a clean reinstall after uninstall).
-const isFirstDeploy = !fs.existsSync(path.join(COPILOT_HOME, '.supercopilot-manifest.json'));
+const manifestPath = path.join(COPILOT_HOME, '.supercopilot-manifest.json');
+const isFirstDeploy = !fs.existsSync(manifestPath);
+logStaleness(manifestPath, getCurrentGitCommit());
 
 const skills = deploySkills();
 const agents = deployAgents();
