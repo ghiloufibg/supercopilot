@@ -8,6 +8,10 @@ This prompt mirrors the `save` skill — see `.github/skills/save/SKILL.md` for 
 
 Requires the custom Memory MCP server registered (Phase 3).
 
+## Memory Scope
+
+Always call `write_memory` with `scope: "project"` — session context and checkpoints are repo-specific by nature (this matches the automatic `sessionEnd` checkpoint hook's own convention: `checkpoint/<project>/<timestamp>`, also project-scoped). Only use `scope: "global"`, and say so explicitly in the response, if the user asks to persist something across every project (e.g. a personal preference), not for ordinary session saves.
+
 ## Triggers
 - Session completion and project context persistence needs
 - Cross-session memory management and checkpoint creation requests

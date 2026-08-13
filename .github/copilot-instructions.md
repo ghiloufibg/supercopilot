@@ -17,6 +17,11 @@ Condensed from the SuperClaude framework's RULES.md + PRINCIPLES.md. Kept short 
 - Batch independent operations; don't serialize work that has no dependency between steps.
 - Run lint/type-check before considering a change complete.
 
+## Custom commands
+This project ships ~29 custom `/name` commands as skills (`copilot skill list` to see them all). When the user types one of these — `/help`, `/save`, `/load`, etc. — invoke that skill via the `skill` tool rather than improvising from general knowledge of what the word usually means; the skill's own instructions take priority over Copilot CLI's built-in behavior for the same word.
+- `/help` lists this project's 29 commands — don't substitute Copilot CLI's own generic built-in help for it.
+- `/save` and `/load` always use `scope: "project"` for `write_memory`/`read_memory`/`list_memories` calls (matching the automatic checkpoint hook's own convention) — never `scope: "global"` unless the user explicitly asks to persist something across every project, and say so explicitly if you do.
+
 ## Tool usage
 - After editing a file, check it for compiler/lint/type errors before considering the change complete — whatever Copilot's diagnostics surface is called this session.
 - Before changing a function/method signature or renaming a symbol, find its other usages in the codebase first and update them too.

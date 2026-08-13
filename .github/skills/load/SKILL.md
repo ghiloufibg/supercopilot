@@ -7,6 +7,10 @@ description: Session lifecycle management with Memory MCP integration for projec
 
 Requires the custom Memory MCP server registered (Phase 3 — replaces the original Serena MCP dependency). Without it, this command has nothing to load.
 
+## Memory Scope
+
+Always call `list_memories`/`read_memory` with `scope: "project"` first — this is where `/save` writes and where the automatic checkpoint hook writes, so it's where prior context actually lives. Only fall back to `scope: "global"` (or omit `scope` to see both) if the user is explicitly asking for something cross-project, and say so explicitly if you do.
+
 ## Triggers
 - Session initialization and project context loading requests
 - Cross-session persistence and memory retrieval needs
