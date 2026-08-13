@@ -1,5 +1,7 @@
 # copilot-superclaude
 
+[![version](https://img.shields.io/github/v/release/ghiloufibg/supercopilot)](https://github.com/ghiloufibg/supercopilot/releases/latest)
+
 > Project name is provisional.
 
 A GitHub Copilot port of the SuperClaude framework, targeting Copilot CLI, VS Code, and JetBrains identically.
