@@ -70,11 +70,11 @@ test('the committed bundle exists', () => {
   assert.ok(existsSync(BUNDLE), 'dist/index.js is missing — run "npm run build" to regenerate it.');
 });
 
-test('the bundle starts with no node_modules and reports its alpha version', () => {
+test('the bundle starts with no node_modules and reports its version', () => {
   const responses = driveServer([INIT]);
   const init = responses.find((r) => r.id === 1);
   assert.equal(init.result.serverInfo.name, 'copilot-superclaude-memory');
-  assert.equal(init.result.serverInfo.version, '0.1.0-alpha.2');
+  assert.equal(init.result.serverInfo.version, '0.1.0');
 });
 
 test('the bundle exposes exactly the four memory tools', () => {

@@ -21108,7 +21108,7 @@ var StdioServerTransport = class {
 import { writeMemory, readMemory, listMemories, deleteMemory } from "./store.js";
 var server = new McpServer({
   name: "copilot-superclaude-memory",
-  version: "0.1.0-alpha.2"
+  version: "0.1.0"
 });
 var scopeSchema = external_exports.enum(["global", "project"]).optional().describe(
   'Defaults to "global" (loads in every session, in every repo). Use "project" for something specific to the current repo only -- the project is inferred automatically, no need to name it.'

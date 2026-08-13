@@ -10,7 +10,7 @@ import { writeMemory, readMemory, listMemories, deleteMemory } from './store.js'
 
 const server = new McpServer({
   name: 'copilot-superclaude-memory',
-  version: '0.1.0-alpha.2',
+  version: '0.1.0',
 });
 
 const scopeSchema = z
